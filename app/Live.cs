@@ -28,7 +28,7 @@ sealed class Live : IDisposable
         _buffer = new BufferedWaveProvider(wave)
         {
             DiscardOnBufferOverflow = true,
-            BufferDuration = TimeSpan.FromMilliseconds(80),
+            BufferDuration = TimeSpan.FromMilliseconds(12),
         };
         _output = new WasapiOut(_headphones, AudioClientShareMode.Shared, true, (int)Math.Max(1, _headphones.AudioClient.DefaultDevicePeriod / 10_000d));
         _output.Init(_buffer);

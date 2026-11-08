@@ -36,6 +36,7 @@ new Engine(sr).Process(steady, steadyLeft, steadyRight);
 var clickGain = Energy(clickLeft, 2000, 300) / Energy(click[Engine.Sl], 2000, 300);
 var steadyGain = Energy(steadyLeft, sr - 2000, 2000) / Energy(steady[Engine.Sl], sr - 2000, 2000);
 Check(clickGain > steadyGain * 1.2f, $"step {clickGain} should beat the steady tone {steadyGain}");
+Check(steadyGain < 1f, $"a steady tone should sit under the input, got {steadyGain}");
 
 var step = Empty(1500);
 for (var i = 400; i < 520; i++)
