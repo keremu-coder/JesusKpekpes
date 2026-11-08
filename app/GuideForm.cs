@@ -98,24 +98,24 @@ sealed class GuideForm : Form
         else
         {
             _step.Text = "Step 3 of 3";
-            var source = OtherDevice();
+            var game = GameDevice();
             if (Selected is null)
             {
                 _body.Text = "Go back and choose the headphones.";
                 _next.Enabled = false;
             }
-            else if (source is null)
+            else if (game is null)
             {
-                _body.Text = "These headphones are the only playback device. Turning the live mix on here would howl. The test you just heard is the sound. A second playback device is needed before the game can pass through.";
-                _next.Text = "Close";
+                _body.Text = "Jesus Kpekpes is not in the playback list yet. Pick the headphones now. Turn on starts when that device is there.";
+                _next.Text = "Turn on";
+                _next.Enabled = false;
             }
             else
             {
-                var seven = source.Channels >= 8 ? "It has 7.1, so side steps stay separate." : "It is not 7.1, so Windows may already have folded the sides. Loudness still applies.";
-                _body.Text = $"The game stays on {source.Name}. I play the result in {Selected.Name}. {seven}";
+                _body.Text = $"The game uses {Engine.DeviceName}. You hear it in {Selected.Name}. Nothing else sits in between.";
                 _next.Text = _live is null ? "Turn on" : "Turn off";
+                _next.Enabled = true;
             }
-            _next.Enabled = true;
         }
     }
 
@@ -127,38 +127,27 @@ sealed class GuideForm : Form
             ShowPage(_page + 1);
             return;
         }
-        if (OtherDevice() is null || Selected is null)
-        {
-            Close();
-            return;
-        }
+        if (GameDevice() is null || Selected is null) return;
         if (_live is null) TurnOn();
         else TurnOff();
     }
 
-    AudioDevice? OtherDevice()
-    {
-        var mine = Selected;
-        if (mine is null) return null;
-        return _devices
-            .Where(d => d.Id != mine.Id)
-            .OrderByDescending(d => d.Channels)
-            .FirstOrDefault();
-    }
+    AudioDevice? GameDevice() =>
+        _devices.FirstOrDefault(d => d.Name.Contains(Engine.DeviceName, StringComparison.OrdinalIgnoreCase) && d.Id != Selected?.Id);
 
     void TurnOn()
     {
         var phones = Selected;
-        var source = OtherDevice();
-        if (phones is null || source is null) return;
+        var game = GameDevice();
+        if (phones is null || game is null) return;
         _live?.Dispose();
-        _live = new Live(source.Id, phones.Id);
+        _live = new Live(game.Id, phones.Id);
         _live.Start();
-        Remember(phones.Id, source.Id, true);
+        Remember(phones.Id, true);
         if (_windows.Checked) Startup.Enable();
         else Startup.Disable();
         _next.Text = "Turn off";
-        _body.Text = $"On. Set the game to {source.Name}. You hear it in {phones.Name}. Buffer about {phones.PeriodMs:0} ms. You can close this window. It stays on.";
+        _body.Text = $"On. Set the game to {Engine.DeviceName}. You hear it in {phones.Name}. You can close this window.";
         _tray.Visible = true;
     }
 
@@ -167,22 +156,23 @@ sealed class GuideForm : Form
         _live?.Dispose();
         _live = null;
         _tray.Visible = false;
-        Remember(Selected?.Id, OtherDevice()?.Id, false);
+        Remember(Selected?.Id, false);
         _next.Text = "Turn on";
     }
 
     void TryResume()
     {
         var saved = Remembered();
-        if (saved.On != true || saved.Headphones is null || saved.Source is null) return;
+        if (saved.On != true || saved.Headphones is null) return;
         var phones = _devices.FirstOrDefault(d => d.Id == saved.Headphones);
-        var source = _devices.FirstOrDefault(d => d.Id == saved.Source);
-        if (phones is null || source is null) return;
+        if (phones is null) return;
         _list.SelectedItem = phones;
-        _live = new Live(source.Id, phones.Id);
+        var game = GameDevice();
+        if (game is null) return;
+        _live = new Live(game.Id, phones.Id);
         _live.Start();
         ShowPage(2);
-        _body.Text = $"On. The game stays on {source.Name}. You hear it in {phones.Name}.";
+        _body.Text = $"On. The game uses {Engine.DeviceName}. You hear it in {phones.Name}.";
         WindowState = FormWindowState.Minimized;
     }
 
@@ -262,30 +252,28 @@ sealed class GuideForm : Form
         button.FlatAppearance.BorderSize = 0;
     }
 
-    static void Remember(string? headphones, string? source, bool on)
+    static void Remember(string? headphones, bool on)
     {
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes");
         Directory.CreateDirectory(dir);
         File.WriteAllLines(Path.Combine(dir, "settings.txt"),
         [
             "headphones=" + headphones,
-            "source=" + source,
             "on=" + (on ? "1" : "0"),
         ]);
     }
 
-    static (string? Headphones, string? Source, bool? On) Remembered()
+    static (string? Headphones, bool? On) Remembered()
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes", "settings.txt");
-        if (!File.Exists(path)) return (null, null, null);
+        if (!File.Exists(path)) return (null, null);
         var map = File.ReadAllLines(path)
             .Select(line => line.Split('=', 2))
             .Where(p => p.Length == 2)
             .ToDictionary(p => p[0], p => p[1]);
         map.TryGetValue("headphones", out var headphones);
-        map.TryGetValue("source", out var source);
         map.TryGetValue("on", out var on);
-        return (headphones, source, on == "1");
+        return (headphones, on == "1");
     }
 }
 
