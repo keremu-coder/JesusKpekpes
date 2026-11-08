@@ -1,0 +1,22 @@
+name: Check
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --experimental-strip-types --test engine/engine.test.ts
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet run --project tests/EngineTests.csproj
+      - run: dotnet build app/JesusKpekpes.App.csproj -c Release
