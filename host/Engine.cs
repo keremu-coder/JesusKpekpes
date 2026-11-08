@@ -3,6 +3,9 @@ namespace JesusKpekpes;
 public sealed class Engine
 {
     public const int L = 0, R = 1, C = 2, Lfe = 3, Sl = 4, Sr = 5, Rl = 6, Rr = 7;
+    public const int BlockFrames = 128;
+    public const int Rate = 48000;
+    public const string DeviceName = "Jesus Kpekpes";
 
     readonly Biquad[][] _correction;
     readonly Biquad[] _step;
