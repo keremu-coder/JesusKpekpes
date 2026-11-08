@@ -11,10 +11,12 @@ sealed class Live : IDisposable
     readonly WasapiOut _output;
     readonly BufferedWaveProvider _buffer;
     readonly Engine _engine;
-    float[][] _input = [];
-    float[] _left = [];
-    float[] _right = [];
-    byte[] _interleaved = [];
+    float[] _pendingIn = new float[Engine.BlockFrames * 8];
+    int _pending;
+    readonly float[][] _block = Enumerable.Range(0, 8).Select(_ => new float[Engine.BlockFrames]).ToArray();
+    readonly float[] _blockLeft = new float[Engine.BlockFrames];
+    readonly float[] _blockRight = new float[Engine.BlockFrames];
+    readonly byte[] _blockBytes = new byte[Engine.BlockFrames * 8];
 
     public Live(string sourceId, string headphoneId)
     {
@@ -28,7 +30,7 @@ sealed class Live : IDisposable
         _buffer = new BufferedWaveProvider(wave)
         {
             DiscardOnBufferOverflow = true,
-            BufferDuration = TimeSpan.FromMilliseconds(12),
+            BufferDuration = TimeSpan.FromMilliseconds(3),
         };
         _output = new WasapiOut(_headphones, AudioClientShareMode.Shared, true, (int)Math.Max(1, _headphones.AudioClient.DefaultDevicePeriod / 10_000d));
         _output.Init(_buffer);
@@ -48,13 +50,6 @@ sealed class Live : IDisposable
         var bytes = format.BitsPerSample / 8;
         var frames = e.BytesRecorded / (bytes * channels);
         if (frames <= 0) return;
-        if (_left.Length != frames)
-        {
-            _input = Enumerable.Range(0, 8).Select(_ => new float[frames]).ToArray();
-            _left = new float[frames];
-            _right = new float[frames];
-            _interleaved = new byte[frames * 8];
-        }
         for (var i = 0; i < frames; i++)
         {
             Span<float> sample = stackalloc float[8];
@@ -65,22 +60,37 @@ sealed class Live : IDisposable
                     ? BitConverter.ToSingle(e.Buffer, offset)
                     : BitConverter.ToInt16(e.Buffer, offset) / 32768f;
             }
-            _input[Engine.L][i] = sample[0];
-            _input[Engine.R][i] = channels > 1 ? sample[1] : sample[0];
-            _input[Engine.C][i] = channels > 2 ? sample[2] : 0;
-            _input[Engine.Lfe][i] = channels > 3 ? sample[3] : 0;
-            _input[Engine.Rl][i] = channels > 4 ? sample[4] : 0;
-            _input[Engine.Rr][i] = channels > 5 ? sample[5] : 0;
-            _input[Engine.Sl][i] = channels > 6 ? sample[6] : 0;
-            _input[Engine.Sr][i] = channels > 7 ? sample[7] : 0;
+            var at = _pending * 8;
+            _pendingIn[at] = sample[0];
+            _pendingIn[at + 1] = channels > 1 ? sample[1] : sample[0];
+            _pendingIn[at + 2] = channels > 2 ? sample[2] : 0;
+            _pendingIn[at + 3] = channels > 3 ? sample[3] : 0;
+            _pendingIn[at + 4] = channels > 6 ? sample[6] : 0;
+            _pendingIn[at + 5] = channels > 7 ? sample[7] : 0;
+            _pendingIn[at + 6] = channels > 4 ? sample[4] : 0;
+            _pendingIn[at + 7] = channels > 5 ? sample[5] : 0;
+            _pending++;
+            if (_pending < Engine.BlockFrames) continue;
+            for (var f = 0; f < Engine.BlockFrames; f++)
+            {
+                _block[Engine.L][f] = _pendingIn[f * 8];
+                _block[Engine.R][f] = _pendingIn[f * 8 + 1];
+                _block[Engine.C][f] = _pendingIn[f * 8 + 2];
+                _block[Engine.Lfe][f] = _pendingIn[f * 8 + 3];
+                _block[Engine.Sl][f] = _pendingIn[f * 8 + 4];
+                _block[Engine.Sr][f] = _pendingIn[f * 8 + 5];
+                _block[Engine.Rl][f] = _pendingIn[f * 8 + 6];
+                _block[Engine.Rr][f] = _pendingIn[f * 8 + 7];
+            }
+            _engine.Process(_block, _blockLeft, _blockRight);
+            for (var f = 0; f < Engine.BlockFrames; f++)
+            {
+                BitConverter.TryWriteBytes(_blockBytes.AsSpan(f * 8, 4), _blockLeft[f]);
+                BitConverter.TryWriteBytes(_blockBytes.AsSpan(f * 8 + 4, 4), _blockRight[f]);
+            }
+            _buffer.AddSamples(_blockBytes, 0, _blockBytes.Length);
+            _pending = 0;
         }
-        _engine.Process(_input, _left, _right);
-        for (var i = 0; i < frames; i++)
-        {
-            BitConverter.TryWriteBytes(_interleaved.AsSpan(i * 8, 4), _left[i]);
-            BitConverter.TryWriteBytes(_interleaved.AsSpan(i * 8 + 4, 4), _right[i]);
-        }
-        _buffer.AddSamples(_interleaved, 0, frames * 8);
     }
 
     public void Dispose()
