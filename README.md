@@ -1,16 +1,14 @@
 Jesus Kpekpes
 
+The game uses one playback device, named Jesus Kpekpes. 7.1, 48 kHz, 128 frames at a time. The window plays that into the headphones you pick. Nothing else sits in the middle.
+
 Open the app. Three steps.
 
 1. Confirm the headphones.
 2. Hear a step, then a shot.
-3. Turn on.
+3. Turn on, once Jesus Kpekpes is in the playback list.
 
-The game stays on the other playback device. The app plays the result in the headphones. Close the window and it stays on, in the tray. Exit is on the tray menu.
-
-Quiet parts come up. A loud shot in front is held down. A short step at the side comes forward.
-
-If the headphones are the only playback device, step 3 stays off. Playing back into the same device howls. The test in step 2 still plays.
+That device is not in the list until its driver is installed. Windows will not load the driver unsigned.
 
 Build on Windows, from this folder:
 
