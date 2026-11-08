@@ -29,7 +29,7 @@ public sealed class Engine
 
     public Engine(int sampleRate)
     {
-        _step = [Bandpass(3400, 1.4f, sampleRate), Bandpass(3400, 1.4f, sampleRate), Bandpass(3400, 1.4f, sampleRate), Bandpass(3400, 1.4f, sampleRate)];
+        _step = [Bandpass(3400, 1.2f, sampleRate), Bandpass(3400, 1.2f, sampleRate), Bandpass(3400, 1.2f, sampleRate), Bandpass(3400, 1.2f, sampleRate)];
         _bandFast = new float[4];
         _bandSlow = new float[4];
         _fullFast = new float[4];
@@ -41,7 +41,7 @@ public sealed class Engine
         _frontRelease = 1 - MathF.Exp(-1f / (sampleRate * 0.08f));
         _loudAttack = 1 - MathF.Exp(-1f / (sampleRate * 0.005f));
         _loudRelease = 1 - MathF.Exp(-1f / (sampleRate * 0.12f));
-        (float Hz, float Db, float Q)[] curve = [(80f, -3.5f, 0.9f), (200f, 3.5f, 0.8f), (3500f, 3f, 1.3f), (7000f, 2f, 1.1f)];
+        (float Hz, float Db, float Q)[] curve = [(80f, -4.5f, 0.9f), (200f, 4.5f, 0.8f), (3500f, 4.5f, 1.2f), (7000f, 2.5f, 1.1f)];
         _correction = new Biquad[8][];
         for (var c = 0; c < 8; c++)
         {
@@ -81,11 +81,11 @@ public sealed class Engine
                 ch[c] = x;
             }
 
-            ch[C] *= 0.45f;
+            ch[C] *= 0.35f;
             var frontPeak = MathF.Max(MathF.Abs(ch[L]), MathF.Abs(ch[R]));
             var frontCoef = frontPeak > _frontEnv ? _frontAttack : _frontRelease;
             _frontEnv += (frontPeak - _frontEnv) * frontCoef;
-            var hold = _frontEnv > 0.28f ? 0.45f : 1f;
+            var hold = _frontEnv > 0.18f ? 0.28f : 1f;
             _frontGain += (hold - _frontGain) * _frontAttack;
             ch[L] *= _frontGain;
             ch[R] *= _frontGain;
@@ -96,22 +96,22 @@ public sealed class Engine
                 var full = MathF.Abs(ch[c]);
                 _fullFast[s] += (full - _fullFast[s]) * _fastCoef;
                 _fullSlow[s] += (full - _fullSlow[s]) * _fullSlowCoef;
-                if (_fullFast[s] < _fullSlow[s] * 1.35f) ch[c] *= 0.42f;
+                if (_fullFast[s] < _fullSlow[s] * 1.25f) ch[c] *= 0.22f;
                 var band = _step[s].Tick(ch[c]);
                 var mag = MathF.Abs(band);
                 _bandFast[s] += (mag - _bandFast[s]) * _fastCoef;
                 _bandSlow[s] += (mag - _bandSlow[s]) * _bandSlowCoef;
                 var rise = _bandFast[s] / (_bandSlow[s] + 1e-5f);
-                var lift = Math.Clamp((rise - 1.6f) / 2f, 0, 1);
-                ch[c] += band * lift * 2.2f;
+                var lift = Math.Clamp((rise - 1.45f) / 1.6f, 0, 1);
+                ch[c] += band * lift * 3.6f;
             }
 
-            left[i] = 0.8f * ch[L] + 0.28f * ch[C] + 0.95f * ch[Sl] + 0.7f * ch[Rl];
-            right[i] = 0.8f * ch[R] + 0.28f * ch[C] + 0.95f * ch[Sr] + 0.7f * ch[Rr];
+            left[i] = 0.72f * ch[L] + 0.2f * ch[C] + 1.15f * ch[Sl] + 0.8f * ch[Rl];
+            right[i] = 0.72f * ch[R] + 0.2f * ch[C] + 1.15f * ch[Sr] + 0.8f * ch[Rr];
             var peak = MathF.Max(MathF.Abs(left[i]), MathF.Abs(right[i]));
             var follow = peak > _loudEnv ? _loudAttack : _loudRelease;
             _loudEnv += (peak - _loudEnv) * follow;
-            var target = _loudEnv < 0.02f ? 2.4f : _loudEnv < 0.1f ? 1.8f : 1f;
+            var target = _loudEnv < 0.015f ? 2.6f : _loudEnv < 0.08f ? 1.9f : 1f;
             _loudGain += (target - _loudGain) * _loudAttack;
             left[i] = Math.Clamp(left[i] * _loudGain, -1, 1);
             right[i] = Math.Clamp(right[i] * _loudGain, -1, 1);
