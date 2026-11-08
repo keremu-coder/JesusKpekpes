@@ -1,19 +1,19 @@
 Jesus Kpekpes
 
-Step 1. engine/engine.ts
-Reads eight speakers, then plays stereo.
+Open the app. Three steps.
 
-Step 2. host/
-On the PC, from this folder:
+1. Confirm the headphones.
+2. Hear a step, then a shot.
+3. Turn on.
 
-  dotnet run --project host -- test
-  dotnet run --project host -- devices
+The game stays on the other playback device. The app plays the result in the headphones. Close the window and it stays on, in the tray. Exit is on the tray menu.
 
-test plays a side step, then a front shot, and prints the buffer Windows gave the headphones.
+Quiet parts come up. A loud shot in front is held down. A short step at the side comes forward.
 
-  dotnet run --project host -- listen --out "Headphone name"
+If the headphones are the only playback device, step 3 stays off. Playing back into the same device howls. The test in step 2 still plays.
 
-listen reads the default device and plays into a different one. Same device howls.
-If the default device is not 7.1, the side step is already gone before the engine sees it.
+Build on Windows, from this folder:
 
-This program is not a device the game can select. Windows only adds that from a signed driver. That is step 3.
+  dotnet publish app/JesusKpekpes.App.csproj -c Release -r win-x64 --self-contained -o publish
+
+Run publish/JesusKpekpes.exe
