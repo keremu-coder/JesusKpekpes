@@ -12,9 +12,13 @@ public sealed class Engine
     readonly float _slowCoef;
     readonly float _frontCoef;
     readonly float _frontRelease;
+    readonly float _loudAttack;
+    readonly float _loudRelease;
     Biquad[][] _correction = [];
     float _frontEnv;
     float _frontGain = 1;
+    float _loudEnv;
+    float _loudGain = 1;
 
     static readonly int[] Surround = [Sl, Sr, Rl, Rr];
     static readonly int[] Front = [L, R, C];
@@ -29,6 +33,14 @@ public sealed class Engine
         _slowCoef = 1 - MathF.Exp(-1f / (sampleRate * 0.08f));
         _frontCoef = 1 - MathF.Exp(-1f / (sampleRate * 0.004f));
         _frontRelease = 1 - MathF.Exp(-1f / (sampleRate * 0.1f));
+        _loudAttack = 1 - MathF.Exp(-1f / (sampleRate * 0.005f));
+        _loudRelease = 1 - MathF.Exp(-1f / (sampleRate * 0.12f));
+        SetCorrection([
+            (80f, -3.5f, 0.9f),
+            (200f, 3.5f, 0.8f),
+            (3500f, 3f, 1.3f),
+            (7000f, 2f, 1.1f),
+        ]);
     }
 
     public void SetCorrection(IReadOnlyList<(float Hz, float Db, float Q)> bands)
@@ -83,6 +95,13 @@ public sealed class Engine
 
             left[i] = ch[L] + 0.5f * ch[C] + 0.7f * ch[Sl] + 0.5f * ch[Rl];
             right[i] = ch[R] + 0.5f * ch[C] + 0.7f * ch[Sr] + 0.5f * ch[Rr];
+            var peak = MathF.Max(MathF.Abs(left[i]), MathF.Abs(right[i]));
+            var follow = peak > _loudEnv ? _loudAttack : _loudRelease;
+            _loudEnv += (peak - _loudEnv) * follow;
+            var target = _loudEnv < 0.02f ? 2.2f : _loudEnv < 0.12f ? 1.7f : _loudEnv > 0.45f ? 0.75f : 1f;
+            _loudGain += (target - _loudGain) * _loudAttack;
+            left[i] = Math.Clamp(left[i] * _loudGain, -1, 1);
+            right[i] = Math.Clamp(right[i] * _loudGain, -1, 1);
         }
     }
 
