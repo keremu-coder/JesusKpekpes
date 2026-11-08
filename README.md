@@ -1,7 +1,19 @@
-Jesus Kpekpes audio engine.
+Jesus Kpekpes
 
-The engine reads eight speakers, then plays stereo.
-No VoiceMeeter. No extra cable.
+Step 1. engine/engine.ts
+Reads eight speakers, then plays stereo.
 
-engine/engine.ts is step 1.
-The Windows device that feeds it is step 2.
+Step 2. host/
+On the PC, from this folder:
+
+  dotnet run --project host -- test
+  dotnet run --project host -- devices
+
+test plays a side step, then a front shot, and prints the buffer Windows gave the headphones.
+
+  dotnet run --project host -- listen --out "Headphone name"
+
+listen reads the default device and plays into a different one. Same device howls.
+If the default device is not 7.1, the side step is already gone before the engine sees it.
+
+This program is not a device the game can select. Windows only adds that from a signed driver. That is step 3.
