@@ -66,32 +66,32 @@ static class Mix
                 var r = right[i];
                 foreach (var f in chainL) l = f.Tick(l);
                 foreach (var f in chainR) r = f.Tick(r);
-                left[i] = Math.Clamp(l * preamp, -1, 1);
-                right[i] = Math.Clamp(r * preamp, -1, 1);
+                left[i] = l * preamp;
+                right[i] = r * preamp;
             }
             return;
         }
 
         var front = filters.Where(f => f.Channels == "L R").ToArray();
         var side = filters.Where(f => f.Channels == "SL SR RL RR").ToArray();
-        var chainL = Chain(front, sr);
-        var chainR = Chain(front, sr);
-        var chainSl = Chain(side, sr);
-        var chainSr = Chain(side, sr);
+        var frontL = Chain(front, sr);
+        var frontR = Chain(front, sr);
+        var sideL = Chain(side, sr);
+        var sideR = Chain(side, sr);
         for (var i = 0; i < left.Length; i++)
         {
             var l = left[i];
             var r = right[i];
             var sl = sideLeft is null ? 0 : sideLeft[i];
             var srch = sideRight is null ? 0 : sideRight[i];
-            foreach (var f in chainL) l = f.Tick(l);
-            foreach (var f in chainR) r = f.Tick(r);
-            foreach (var f in chainSl) sl = f.Tick(sl);
-            foreach (var f in chainSr) srch = f.Tick(srch);
+            foreach (var f in frontL) l = f.Tick(l);
+            foreach (var f in frontR) r = f.Tick(r);
+            foreach (var f in sideL) sl = f.Tick(sl);
+            foreach (var f in sideR) srch = f.Tick(srch);
             l = (l + 0.7f * sl) * preamp;
             r = (r + 0.7f * srch) * preamp;
-            left[i] = Math.Clamp(l, -1, 1);
-            right[i] = Math.Clamp(r, -1, 1);
+            left[i] = l;
+            right[i] = r;
         }
     }
 
@@ -145,7 +145,7 @@ static class Mix
         ];
     }
 
-    static float Lfe(MixPlan plan) => -(Math.Clamp(plan.Quiet, 0, 100) / 100f * 18f);
+    static float Lfe(MixPlan plan) => -(plan.Quiet / 100f * 18f);
 
     static void Write(System.Text.StringBuilder text, CultureInfo n, string channels, IEnumerable<Band> filters)
     {
