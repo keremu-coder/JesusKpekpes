@@ -1,17 +1,13 @@
 Jesus Kpekpes
 
-The game uses one playback device, named Jesus Kpekpes. 7.1, 48 kHz, 128 frames at a time. The window plays that into the headphones you pick. Nothing else sits in the middle.
+The game stays on the headphones you already use. Secure Boot stays on.
 
 Open the app. Three steps.
 
 1. Confirm the headphones.
 2. Hear a step, then a shot.
-3. Turn on, once Jesus Kpekpes is in the playback list.
+3. Turn on. Press Yes if Windows asks.
 
-That device is not in the list until its driver is installed. Windows will not load the driver unsigned.
+Footstep hit raises only the short step. Surround quiet turns the room down. Leave the game on those headphones.
 
-Build on Windows, from this folder:
-
-  dotnet publish app/JesusKpekpes.App.csproj -c Release -r win-x64 --self-contained -o publish
-
-Run publish/JesusKpekpes.exe
+Equalizer APO must already be installed. That is the piece that runs the mix on the headphones. Your own device waits until it is signed.
