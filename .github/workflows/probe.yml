@@ -1,0 +1,72 @@
+name: Probe vendor downloads
+on:
+  push:
+    branches: [installer]
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: Equalizer APO
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $lines = @()
+          try {
+            $best = Invoke-RestMethod -Uri 'https://sourceforge.net/projects/equalizerapo/best_release.json' -UserAgent 'curl/8.0'
+            $win = $best.platform_releases.windows
+            $lines += "best windows file: $($win.filename)"
+            $lines += "url: $($win.url)"
+            $lines += "md5: $($win.md5sum)"
+            $lines += "date: $($win.date)"
+            $lines += "bytes: $($win.bytes)"
+            $dest = Join-Path $env:RUNNER_TEMP 'apo.exe'
+            Invoke-WebRequest -Uri $win.url -OutFile $dest -UserAgent 'curl/8.0' -MaximumRedirection 10
+            $lines += "downloaded bytes: $((Get-Item $dest).Length)"
+            $lines += "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
+            $sig = Get-AuthenticodeSignature $dest
+            $lines += "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
+            $proc = Start-Process -FilePath $dest -ArgumentList '/S' -Wait -PassThru
+            $lines += "silent install exit code: $($proc.ExitCode)"
+            $root = Join-Path ${env:ProgramFiles} 'EqualizerAPO'
+            $lines += "install folder exists: $(Test-Path $root)"
+            if (Test-Path $root) { $lines += "files: $((Get-ChildItem $root -Name) -join ', ')" }
+            $cfg = Join-Path $root 'config'
+            if (Test-Path $cfg) { $lines += "config files: $((Get-ChildItem $cfg -Name) -join ', ')" }
+            $conf = Join-Path $root 'Configurator.exe'
+            $lines += "configurator exists: $(Test-Path $conf)"
+          } catch { $lines += "ERROR: $($_.Exception.Message)" }
+          Write-Host ($lines -join "`n")
+          $msg = ($lines -join '%0A')
+          Write-Host "::notice title=apo::$msg"
+      - name: ReaPlugs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $lines = @()
+          try {
+            $page = Invoke-WebRequest -Uri 'https://www.reaper.fm/reaplugs/' -UserAgent 'curl/8.0'
+            $links = $page.Links | Where-Object { $_.href -match 'reaplugs' } | ForEach-Object { $_.href }
+            $lines += "links: $($links -join ' | ')"
+            $pick = $links | Where-Object { $_ -match 'x64' -and $_ -match '\.exe$' } | Select-Object -First 1
+            $lines += "picked: $pick"
+            if ($pick) {
+              $url = if ($pick -match '^https?:') { $pick } else { 'https://www.reaper.fm/reaplugs/' + $pick.TrimStart('/') }
+              $dest = Join-Path $env:RUNNER_TEMP 'reaplugs.exe'
+              Invoke-WebRequest -Uri $url -OutFile $dest -UserAgent 'curl/8.0'
+              $lines += "url: $url"
+              $lines += "downloaded bytes: $((Get-Item $dest).Length)"
+              $lines += "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
+              $sig = Get-AuthenticodeSignature $dest
+              $lines += "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
+              $proc = Start-Process -FilePath $dest -ArgumentList '/S' -Wait -PassThru
+              $lines += "silent install exit code: $($proc.ExitCode)"
+              $found = Get-ChildItem -Path 'C:\Program Files','C:\Program Files (x86)' -Recurse -Filter 'reacomp*.dll' -ErrorAction SilentlyContinue | Select-Object -First 4 -ExpandProperty FullName
+              $lines += "reacomp: $($found -join ' | ')"
+              $x = Get-ChildItem -Path 'C:\Program Files','C:\Program Files (x86)' -Recurse -Filter 'reaxcomp*.dll' -ErrorAction SilentlyContinue | Select-Object -First 4 -ExpandProperty FullName
+              $lines += "reaxcomp: $($x -join ' | ')"
+            }
+          } catch { $lines += "ERROR: $($_.Exception.Message)" }
+          Write-Host ($lines -join "`n")
+          $msg = ($lines -join '%0A')
+          Write-Host "::notice title=reaplugs::$msg"
