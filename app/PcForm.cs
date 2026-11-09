@@ -1,0 +1,162 @@
+namespace JesusKpekpes;
+
+sealed class PcForm : Form
+{
+    readonly TextBox _out = new();
+    bool _busy;
+
+    public PcForm()
+    {
+        Text = "PC tune";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(720, 640);
+        BackColor = Color.FromArgb(7, 9, 15);
+        ForeColor = Color.FromArgb(242, 243, 245);
+        Font = new Font("Segoe UI", 10f);
+
+        var note = new Label
+        {
+            Text = "This does not touch audio. Undo here does not turn the audio tune off.",
+            Bounds = new Rectangle(16, 12, 680, 24),
+            ForeColor = Color.FromArgb(180, 184, 198),
+        };
+        _out.SetBounds(16, 168, 688, 456);
+        _out.Multiline = true;
+        _out.ReadOnly = true;
+        _out.ScrollBars = ScrollBars.Vertical;
+        _out.BackColor = Color.FromArgb(18, 20, 28);
+        _out.ForeColor = Color.FromArgb(242, 243, 245);
+        _out.BorderStyle = BorderStyle.None;
+        _out.Font = new Font("Consolas", 9f);
+        _out.Text = PlainPreview();
+
+        var y = 44;
+        Add("What will change", 16, y, () => Show(PlainPreview() + "\r\n\r\n" + Run("-Action Optimize -Module Both -WhatIf")));
+        Add("Optimize PC and controller", 210, y, () => Show(Run("-Action Optimize -Module Both")), 210);
+        Add("Undo that", 440, y, () =>
+        {
+            if (MessageBox.Show(this, "Put the PC and controller changes back? Audio stays as it is.", "Undo", MessageBoxButtons.YesNo) == DialogResult.Yes)
+                Show(Run("-Action Undo -Module Both -Silent"));
+        });
+        y = 96;
+        Add("Check this PC", 16, y, () => Show(Run("-Action Verify -Module Both") + "\r\n\r\n" + CodFind.Report()));
+        Add("NVIDIA panel", 176, y, OpenNvidia);
+        Add("Display settings", 336, y, () => Open("ms-settings:display"));
+        Add("Network check", 516, y, () => _ = LoadCheck());
+        Controls.Add(note);
+        Controls.Add(_out);
+    }
+
+    void Add(string text, int x, int y, Action click, int width = 150)
+    {
+        var button = new Button
+        {
+            Text = text,
+            Bounds = new Rectangle(x, y, width, 40),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(88, 101, 242),
+            ForeColor = Color.White,
+        };
+        button.FlatAppearance.BorderSize = 0;
+        button.Click += (_, _) => click();
+        Controls.Add(button);
+    }
+
+    static string PlainPreview() =>
+        """
+        What will change if you press Optimize. Nothing has been written yet.
+
+        - Power plan to full performance, USB and PCIe power saving off
+        - Game Mode, Game Bar and Game DVR off. Hardware GPU scheduling on
+        - A 0.5 ms timer
+        - Wired adapter power saving off
+        - SysMain, DiagTrack and Windows Search disabled
+        - Windows Update will not install drivers or reboot while you are logged in
+        - Xbox apps removed
+        - High priority for the game
+        - Controller timer and strafe profile, only if DS4Windows is there
+        - Secure Boot stays on
+        - Audio is not changed
+
+        By hand, once: NVIDIA Control Panel, add cod.exe, Power management mode = Prefer maximum performance.
+        The check can see Resizable BAR from the driver. It cannot flip the BIOS switch.
+        """;
+
+    void Show(string text) => _out.Text = string.IsNullOrWhiteSpace(text) ? "No report came back." : text;
+
+    string Run(string args)
+    {
+        if (_busy) return "Still working.";
+        var script = Script();
+        if (!File.Exists(script)) return "The PC script was not found next to the program.";
+        _busy = true;
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" " + args,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(script)!,
+            };
+            using var process = System.Diagnostics.Process.Start(start);
+            if (process is null) return "Windows did not start PowerShell.";
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(180000)) return "That is taking too long. Close it from Task Manager if it is stuck.";
+            return (output.Result + "\r\n" + error.Result).Trim();
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    async Task LoadCheck()
+    {
+        Show("Checking the line...");
+        try { Show(await NetCheck.Run()); }
+        catch (Exception ex) { Show(ex.Message); }
+    }
+
+    static void Open(string target) =>
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
+
+    void OpenNvidia()
+    {
+        foreach (var path in new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "NVIDIA Corporation", "Control Panel Client", "nvcplui.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "NVIDIA Corporation", "Control Panel Client", "nvcplui.exe"),
+        })
+        {
+            if (!File.Exists(path)) continue;
+            Open(path);
+            return;
+        }
+        Show("NVIDIA Control Panel was not found. The manual step is still: add cod.exe and set Power management mode to Prefer maximum performance.");
+    }
+
+    static string Script()
+    {
+        var beside = Path.Combine(AppContext.BaseDirectory, "pc", "Kpekpes.ps1");
+        if (File.Exists(beside)) return beside;
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "pc", "Kpekpes.ps1");
+            if (File.Exists(candidate)) return candidate;
+            dir = dir.Parent;
+        }
+        return beside;
+    }
+}

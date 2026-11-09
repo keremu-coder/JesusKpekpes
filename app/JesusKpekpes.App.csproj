@@ -13,4 +13,10 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <Compile Include="..\host\Engine.cs" Link="Engine.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\pc\**\*">
+      <Link>pc\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

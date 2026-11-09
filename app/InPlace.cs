@@ -33,6 +33,12 @@ static class InPlace
         }
     }
 
+    public static IReadOnlyList<string> Found()
+    {
+        var root = ConfigDir();
+        return root is null ? [] : Mix.Conflicts(ReadOthers(root));
+    }
+
     public static void Clear()
     {
         var root = ConfigDir();

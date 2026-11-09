@@ -6,6 +6,6 @@ static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        Application.Run(new GuideForm(args.Contains("--on")));
+        Application.Run(args.Contains("--on") ? new GuideForm(true) : new HomeForm());
     }
 }
