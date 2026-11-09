@@ -5,25 +5,29 @@ static class InPlace
     const string FileName = "jesus-kpekpes.txt";
     const string IncludeLine = "Include: jesus-kpekpes.txt";
 
-    public static bool Apply(string headphoneName, int hit, int quiet)
+    public static bool Apply(string headphoneName, int hitAmount, int quiet)
     {
         var dir = ConfigDir();
         if (dir is null) return false;
-        var hitDb = hit / 100f * 9f;
-        var roomDb = -(quiet / 100f * 12f);
-        var bodyDb = hit / 100f * 4f;
+        var room = quiet / 100f * 8f;
+        var hit = hitAmount / 100f * 6f;
+        var peak = room + hit;
+        var body = room + hit * 0.45f;
+        var center = -(quiet / 100f * 10f);
+        var gun = -(quiet / 100f * 6f);
+        var lfe = -(quiet / 100f * 24f);
         var text =
             "Device: " + headphoneName + "\r\n" +
             "Channel: C\r\n" +
-            "Preamp: -10 dB\r\n" +
+            "Preamp: " + center.ToString("0.0") + " dB\r\n" +
             "Channel: L R\r\n" +
-            "Filter: ON LSC Fc 140 Hz Gain -6 dB Q 0.7\r\n" +
+            "Filter: ON LSC Fc 140 Hz Gain " + gun.ToString("0.0") + " dB Q 0.7\r\n" +
             "Channel: SL SR RL RR\r\n" +
-            "Preamp: " + roomDb.ToString("0.0") + " dB\r\n" +
-            "Filter: ON PK Fc 280 Hz Gain " + bodyDb.ToString("0.0") + " dB Q 0.8\r\n" +
-            "Filter: ON PK Fc 3400 Hz Gain " + hitDb.ToString("0.0") + " dB Q 1.2\r\n" +
+            "Preamp: " + (-room).ToString("0.0") + " dB\r\n" +
+            "Filter: ON PK Fc 280 Hz Gain " + body.ToString("0.0") + " dB Q 0.8\r\n" +
+            "Filter: ON PK Fc 3400 Hz Gain " + peak.ToString("0.0") + " dB Q 1.2\r\n" +
             "Channel: LFE\r\n" +
-            "Preamp: -30 dB\r\n";
+            "Preamp: " + lfe.ToString("0.0") + " dB\r\n";
         try
         {
             File.WriteAllText(Path.Combine(dir, FileName), text);
