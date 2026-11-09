@@ -8,5 +8,7 @@
   <ItemGroup>
     <Compile Include="..\host\Engine.cs" Link="Engine.cs" />
     <Compile Include="..\app\Mix.cs" Link="Mix.cs" />
+    <Compile Include="..\app\LoudnessMath.cs" Link="LoudnessMath.cs" />
+    <Compile Include="..\app\CodProfile.cs" Link="CodProfile.cs" />
   </ItemGroup>
 </Project>

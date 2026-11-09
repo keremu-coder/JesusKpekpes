@@ -28,7 +28,9 @@ sealed class HomeForm : Form
         var audio = Button("Audio tune", 150, () => new GuideForm(false).Show());
         var pc = Button("Optimize the PC", 214, () => new PcForm().Show());
         var programs = Button("Get the audio programs", 278, () => new ProgramsForm().ShowDialog(this));
-        Controls.AddRange([title, body, audio, pc, programs]);
+        var cod = Button("Call of Duty settings", 342, () => new CodForm().Show());
+        var check = Button("Sound check (compare two tunes)", 406, () => new SoundCheckForm().Show());
+        Controls.AddRange([title, body, audio, pc, programs, cod, check]);
     }
 
     static Button Button(string text, int y, Action click)

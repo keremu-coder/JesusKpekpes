@@ -107,4 +107,48 @@ Check(Mix.Conflicts("VSTPlugin: Library x.dll").Contains("VST plugins"), "VST pl
 Check(Mix.Config(new MixPlan(Preset.Drop, Route.Surround, 100, 100, "Headphones")).Contains("0.7*C"), "7.1 must fold the center in");
 Check(Mix.PreampDb(drop) < -1f, "preamp should leave real headroom");
 
+// ---- Sound check math ----
+{
+    var sine = new float[sr * 2];
+    for (var i = 0; i < sine.Length; i++) sine[i] = 0.1f * MathF.Sin(2 * MathF.PI * 3400 * i / sr);
+    var stats = LoudnessMath.Analyze(sine, sr);
+    Check(Math.Abs(stats.ActiveDb - (-23.0)) < 0.5, $"0.1 sine should read about -23 dB, got {stats.ActiveDb}");
+    Check(Math.Abs(stats.PeakDb - (-20.0)) < 0.5, $"peak should read about -20 dB, got {stats.PeakDb}");
+    Check(stats.StepMinusLowDb > 10, $"a 3.4 kHz tone should sit far above the bass, got {stats.StepMinusLowDb}");
+    var bassTone = new float[sr * 2];
+    for (var i = 0; i < bassTone.Length; i++) bassTone[i] = 0.1f * MathF.Sin(2 * MathF.PI * 60 * i / sr);
+    Check(LoudnessMath.Analyze(bassTone, sr).StepMinusLowDb < -10, "a 60 Hz tone should sit far below");
+    Check(LoudnessMath.Analyze(new float[sr], sr).ActiveSeconds == 0, "silence should count as no sound");
+    var half = sine.Select(x => x * 0.5f).ToArray();
+    Check(Math.Abs(LoudnessMath.Analyze(half, sr).ActiveDb - stats.ActiveDb + 6.0) < 0.3, "half amplitude should read 6 dB lower");
+}
+
+// ---- Call of Duty options file ----
+{
+    const string file =
+        "1\r\n\r\n//\r\n// Audio\r\n\r\n// Adjusts the volume of the music\r\nMusicVolume@0;14317;21371 = 0.500000 // 0.000000 to 1.000000\r\n\r\n" +
+        "// Number of output channels\r\nAudioWantedChannelsNumber@0;59395;43096 = 8 // 0 to 16\r\n\r\n" +
+        "// Speaker device requested by the user\r\nSoundOutputDevice@0;2059;35888 = {0.0.0.00000000}.{30e2667c-40d1-4f30-8570-b900a3c8f089}\r\n\r\n" +
+        "// Monitor\r\nMonitor@0;2059;35888 = MAG 255F E20\r\n\r\n" +
+        "// Shadows\r\nShadowQuality@0;3981;58629 = High // one of Very_Low, Low, Medium, High, Very_High\r\n" +
+        "VSync@0;55075;7764 = disabled // one of disabled, 100%, 50%, 33%, 25%\r\n" +
+        "ParticleQuality@0;60198;58629 = very low\r\n";
+    var plan = CodProfile.Plan(file, CodProfile.Core);
+    Check(plan.NewText.Contains("MusicVolume@0;14317;21371 = 0.000000 // 0.000000 to 1.000000"), "value changes, key suffix and comment stay");
+    Check(plan.NewText.Contains("AudioWantedChannelsNumber@0;59395;43096 = 2 // 0 to 16"), "channels set to 2");
+    Check(plan.NewText.Contains("ShadowQuality@0;3981;58629 = Very_Low // one of"), "shadow value changes, comment stays");
+    Check(plan.NewText.Contains("SoundOutputDevice@0;2059;35888 = {0.0.0.00000000}.{30e2667c-40d1-4f30-8570-b900a3c8f089}"), "device id must not change");
+    Check(plan.NewText.Contains("Monitor@0;2059;35888 = MAG 255F E20"), "monitor must not change");
+    Check(plan.NewText.Contains("VSync@0;55075;7764 = disabled // one of disabled, 100%"), "already-right lines stay as they were");
+    Check(plan.NewText.Contains("ParticleQuality@0;60198;58629 = very low"), "line without comment stays intact");
+    Check(plan.NewText.Contains("\r\n") && !plan.NewText.Replace("\r\n", "").Contains("\r"), "line endings must stay");
+    Check(plan.Changes.Count == 3, $"expected 3 changes, got {plan.Changes.Count}");
+    Check(plan.Unchanged >= 2, "unchanged lines should be counted");
+    Check(plan.Missing.Count > 10, "settings not in this file should be reported missing");
+    var again = CodProfile.Plan(plan.NewText, CodProfile.Core);
+    Check(again.Changes.Count == 0 && again.NewText == plan.NewText, "applying twice must change nothing");
+    Check(!CodProfile.Core.Any(s => s.Key.Contains("Device") || s.Key is "Monitor" or "Resolution" or "RefreshRate" or "GPUName" or "MaxFpsInGame"), "hardware keys must never be in the profile");
+    Check(CodProfile.Chosen(true).Length == CodProfile.Core.Length + CodProfile.Lowest.Length, "lowest option adds its own keys");
+}
+
 Console.WriteLine("engine ok");
