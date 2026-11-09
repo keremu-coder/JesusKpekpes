@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\host\Engine.cs" Link="Engine.cs" />
+    <Compile Include="..\app\Mix.cs" Link="Mix.cs" />
   </ItemGroup>
 </Project>
