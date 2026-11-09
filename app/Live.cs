@@ -56,9 +56,10 @@ sealed class Live : IDisposable
         var bytes = format.BitsPerSample / 8;
         var frames = e.BytesRecorded / (bytes * channels);
         if (frames <= 0) return;
+        Span<float> sample = stackalloc float[8];
         for (var i = 0; i < frames; i++)
         {
-            Span<float> sample = stackalloc float[8];
+            sample.Clear();
             for (var c = 0; c < Math.Min(8, channels); c++)
             {
                 var offset = (i * channels + c) * bytes;

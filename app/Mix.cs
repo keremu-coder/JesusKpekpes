@@ -6,7 +6,9 @@ enum Preset { Drop, Well }
 
 enum Route { Stereo, Surround }
 
-sealed record MixPlan(Preset Preset, Route Route, int Hit, int Quiet, string Device);
+enum Level { Safe, Balanced, Loud }
+
+sealed record MixPlan(Preset Preset, Route Route, int Hit, int Quiet, string Device, Level Level = Level.Safe);
 
 static class Mix
 {
@@ -24,7 +26,9 @@ static class Mix
     {
         var n = CultureInfo.InvariantCulture;
         var filters = Filters(plan);
-        var preamp = string.IsNullOrWhiteSpace(plugin) ? PreampDb(filters, plan.Route) : 0f;
+        var preamp = string.IsNullOrWhiteSpace(plugin)
+            ? PreampDb(filters, plan.Route, plan.Level)
+            : plan.Level switch { Level.Balanced => 1.5f, Level.Loud => 3f, _ => 0f };
         var text = new System.Text.StringBuilder();
         text.Append("Device: ").Append(DeviceSelector(plan.Device)).Append("\r\n");
         if (plan.Route == Route.Surround)
@@ -189,9 +193,9 @@ static class Mix
         return string.Join("\r\n", kept).TrimEnd();
     }
 
-    public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route);
+    public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route, plan.Level);
 
-    static float PreampDb(Band[] filters, Route route)
+    static float PreampDb(Band[] filters, Route route, Level level)
     {
         var worst = -120f;
         for (var hz = 40f; hz <= 16000f; hz *= 1.06f)
@@ -199,7 +203,9 @@ static class Mix
             var db = OutputDb(filters, route, hz);
             if (db > worst) worst = db;
         }
-        return -(worst + 1f);
+        var safe = -(worst + 1f);
+        var give = level switch { Level.Balanced => 2f, Level.Loud => 4f, _ => 0f };
+        return MathF.Min(-0.5f, safe + give);
     }
 
     static float OutputDb(Band[] filters, Route route, float hz)

@@ -74,7 +74,7 @@ sealed class GuideForm : Form
         _preset.Items.AddRange(new object[] { "Drop", "Well" });
         _preset.SelectedIndex = 0;
         _preset.SetBounds(28, 352, 180, 32);
-        _seven.Text = "7.1";
+        _seven.Text = "7.1, untested";
         _seven.SetBounds(230, 348, 160, 28);
         _keep.SetBounds(28, 400, 404, 28);
         _level.Items.AddRange(new object[] { "Safe (never clips)", "Balanced (louder)", "Loud (may distort)" });
@@ -132,7 +132,7 @@ sealed class GuideForm : Form
         _preset.Visible = mix;
         _seven.Visible = mix;
         _keep.Visible = mix;
-        _level.Visible = false;
+        _level.Visible = mix;
         _seven.Enabled = Selected is { Channels: >= 8 };
         if (!_seven.Enabled && _seven.Checked) _seven.Checked = false;
         StopPreview();
@@ -187,7 +187,7 @@ sealed class GuideForm : Form
     {
         if (_page != 2 || Selected is null) return;
         _body.Text = _seven.Checked
-            ? $"7.1 on {Selected.Name}. The game must actually be set to 7.1."
+            ? "7.1 is untested. The centre and the low speaker are muted after the fold. Leave this off for Warzone."
             : $"Stereo on {Selected.Name}. The game can stay at 2 channels.";
     }
 
@@ -205,7 +205,8 @@ sealed class GuideForm : Form
         _seven.Checked ? Route.Surround : Route.Stereo,
         _loud.Value,
         _room.Value,
-        name);
+        name,
+        (Level)Math.Clamp(_level.SelectedIndex, 0, 2));
 
     void TurnOn()
     {
