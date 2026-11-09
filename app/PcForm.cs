@@ -33,15 +33,15 @@ sealed class PcForm : Form
         _out.Text = PlainPreview();
 
         var y = 44;
-        Add("What will change", 16, y, () => Show(PlainPreview() + "\r\n\r\n" + Run("-Action Optimize -Module Both -WhatIf")));
-        Add("Optimize PC and controller", 210, y, () => Show(Run("-Action Optimize -Module Both")), 210);
+        Add("What will change", 16, y, () => _ = Go("-Action Optimize -Module Both -WhatIf", t => PlainPreview() + "\r\n\r\n" + t));
+        Add("Optimize PC and controller", 210, y, () => _ = Go("-Action Optimize -Module Both"), 210);
         Add("Undo that", 440, y, () =>
         {
             if (MessageBox.Show(this, "Put the PC and controller changes back? Audio stays as it is.", "Undo", MessageBoxButtons.YesNo) == DialogResult.Yes)
-                Show(Run("-Action Undo -Module Both -Silent"));
+                _ = Go("-Action Undo -Module Both -Silent");
         });
         y = 96;
-        Add("Check this PC", 16, y, () => Show(Run("-Action Verify -Module Both") + "\r\n\r\n" + CodFind.Report()));
+        Add("Check this PC", 16, y, () => _ = Go("-Action Verify -Module Both", t => t + "\r\n\r\n" + CodFind.Report()));
         Add("NVIDIA panel", 176, y, OpenNvidia);
         Add("Display settings", 336, y, () => Open("ms-settings:display"));
         Add("Network check", 516, y, () => _ = LoadCheck());
@@ -86,12 +86,30 @@ sealed class PcForm : Form
 
     void Show(string text) => _out.Text = string.IsNullOrWhiteSpace(text) ? "No report came back." : text;
 
-    string Run(string args)
+    async Task Go(string args, Func<string, string>? wrap = null)
     {
-        if (_busy) return "Still working.";
-        var script = Script();
-        if (!File.Exists(script)) return "The PC script was not found next to the program.";
+        if (_busy)
+        {
+            Show("Still working.");
+            return;
+        }
         _busy = true;
+        Show("Working. This can take a minute. The window stays usable.");
+        try
+        {
+            var text = await Task.Run(() => Run(args));
+            Show(wrap is null ? text : wrap(text));
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    static string Run(string args)
+    {
+        var script = Script();
+        if (!File.Exists(script)) return "The PC script was not found next to the program. Reinstall or unzip the whole folder.";
         try
         {
             var start = new System.Diagnostics.ProcessStartInfo
@@ -114,10 +132,6 @@ sealed class PcForm : Form
         catch (Exception ex)
         {
             return ex.Message;
-        }
-        finally
-        {
-            _busy = false;
         }
     }
 
@@ -148,15 +162,7 @@ sealed class PcForm : Form
 
     static string Script()
     {
-        var beside = Path.Combine(AppContext.BaseDirectory, "pc", "Kpekpes.ps1");
-        if (File.Exists(beside)) return beside;
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null)
-        {
-            var candidate = Path.Combine(dir.FullName, "pc", "Kpekpes.ps1");
-            if (File.Exists(candidate)) return candidate;
-            dir = dir.Parent;
-        }
-        return beside;
+        // Only the copy next to the program. The app runs as administrator, so it must never pick up a script from elsewhere.
+        return Path.Combine(AppContext.BaseDirectory, "pc", "Kpekpes.ps1");
     }
 }

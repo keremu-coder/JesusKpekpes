@@ -19,7 +19,7 @@ static class InPlace
             var folder = Path.Combine(root, FolderName);
             Directory.CreateDirectory(folder);
             File.WriteAllText(Path.Combine(folder, "on.txt"), Mix.Config(plan));
-            File.WriteAllText(Path.Combine(folder, "switch.txt"), Mix.Switch(true));
+            File.WriteAllText(Path.Combine(folder, "switch.txt"), Mix.Switch(true, folder));
             EnsureInclude(root);
             return Attached(deviceId) ? WriteResult.On : WriteResult.NotAttached;
         }
@@ -39,13 +39,39 @@ static class InPlace
         return root is null ? [] : Mix.Conflicts(ReadOthers(root));
     }
 
-    public static void Clear()
+    public static bool Clear()
     {
         var root = ConfigDir();
-        if (root is null) return;
-        var folder = Path.Combine(root, FolderName);
-        Directory.CreateDirectory(folder);
-        File.WriteAllText(Path.Combine(folder, "switch.txt"), Mix.Switch(false));
+        if (root is null) return true;
+        try
+        {
+            var folder = Path.Combine(root, FolderName);
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, "switch.txt"), Mix.Switch(false));
+            return true;
+        }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (IOException) { return false; }
+    }
+
+    /// <summary>Deletes our folder and our one include line. Everything else in the config is left as it was.</summary>
+    public static bool Remove()
+    {
+        var root = ConfigDir();
+        if (root is null) return true;
+        try
+        {
+            var folder = Path.Combine(root, FolderName);
+            if (Directory.Exists(folder)) Directory.Delete(folder, true);
+            var main = Path.Combine(root, "config.txt");
+            if (!File.Exists(main)) return true;
+            var lines = File.ReadAllLines(main);
+            var kept = lines.Where(l => !l.Contains(FolderName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (kept.Length != lines.Length) File.WriteAllLines(main, kept);
+            return true;
+        }
+        catch (UnauthorizedAccessException) { return false; }
+        catch (IOException) { return false; }
     }
 
     public static bool Attached(string deviceId)

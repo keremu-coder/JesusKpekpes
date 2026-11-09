@@ -13,8 +13,8 @@ sealed class GuideForm : Form
     readonly Button _next = new();
     readonly Button _back = new();
     readonly CheckBox _seven = new();
-    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
-    readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
+    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 60, TickFrequency = 25 };
+    readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 50, TickFrequency = 25 };
     readonly Label _loudLabel = new();
     readonly Label _roomLabel = new();
     readonly ComboBox _preset = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -94,6 +94,17 @@ sealed class GuideForm : Form
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; });
+        menu.Items.Add("Remove completely", null, (_, _) =>
+        {
+            InPlace.Remove();
+            _on = false;
+            _keepOthers = false;
+            _tray.Visible = false;
+            Remember(Selected?.Id, false);
+            _next.Text = "Turn on";
+            _body.Text = "Removed. Nothing of ours is left in Equalizer APO.";
+            Show();
+        });
         menu.Items.Add("Exit", null, (_, _) => { _exit = true; Close(); });
         _tray.ContextMenuStrip = menu;
         ShowPage(0);
@@ -219,7 +230,12 @@ sealed class GuideForm : Form
 
     void TurnOff()
     {
-        InPlace.Clear();
+        var cleared = InPlace.Clear();
+        if (!cleared)
+        {
+            _body.Text = "Windows blocked turning it off. Press Yes if it asks, then try again.";
+            return;
+        }
         _on = false;
         _keepOthers = false;
         _live?.Dispose();
@@ -227,6 +243,7 @@ sealed class GuideForm : Form
         _tray.Visible = false;
         Remember(Selected?.Id, false);
         _next.Text = "Turn on";
+        _body.Text = "Off. Your other audio setup is exactly as it was.";
     }
 
     void TryResume()
