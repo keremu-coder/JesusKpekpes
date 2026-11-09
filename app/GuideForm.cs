@@ -14,6 +14,10 @@ sealed class GuideForm : Form
     readonly Button _next = new();
     readonly Button _back = new();
     readonly CheckBox _windows = new();
+    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
+    readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
+    readonly Label _loudLabel = new();
+    readonly Label _roomLabel = new();
     readonly NotifyIcon _tray = new();
     int _page;
     Live? _live;
@@ -40,7 +44,7 @@ sealed class GuideForm : Form
         _title.Text = "Jesus Kpekpes";
         _step.SetBounds(28, 68, 400, 24);
         _step.ForeColor = Color.FromArgb(139, 124, 255);
-        _body.SetBounds(28, 108, 404, 90);
+        _body.SetBounds(28, 108, 404, 80);
         _body.ForeColor = Color.FromArgb(180, 184, 198);
         _list.SetBounds(28, 210, 404, 220);
         _list.BackColor = Color.FromArgb(18, 20, 28);
@@ -56,12 +60,25 @@ sealed class GuideForm : Form
         _windows.Checked = true;
         _windows.Visible = false;
 
+        _loudLabel.SetBounds(28, 200, 404, 22);
+        _loudLabel.Text = "Footstep loudness";
+        _loud.SetBounds(28, 224, 404, 40);
+        _roomLabel.SetBounds(28, 276, 404, 22);
+        _roomLabel.Text = "Surround quiet";
+        _room.SetBounds(28, 300, 404, 40);
+        _loud.Visible = false;
+        _room.Visible = false;
+        _loudLabel.Visible = false;
+        _roomLabel.Visible = false;
+        _loud.Scroll += (_, _) => ApplyMix();
+        _room.Scroll += (_, _) => ApplyMix();
+
         Style(_back, "Back", 28, 492, 120);
         Style(_next, "Next", 252, 492, 180);
         _back.Click += (_, _) => ShowPage(_page - 1);
         _next.Click += (_, _) => OnNext();
 
-        Controls.AddRange([_title, _step, _body, _list, _windows, _back, _next]);
+        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _windows, _back, _next]);
         _tray.Icon = SystemIcons.Application;
         _tray.Text = "Jesus Kpekpes";
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
@@ -81,18 +98,25 @@ sealed class GuideForm : Form
         _back.Visible = _page > 0;
         _list.Visible = _page == 0;
         _windows.Visible = _page == 2;
+        var mix = _page == 2;
+        _loud.Visible = mix;
+        _room.Visible = mix;
+        _loudLabel.Visible = mix;
+        _roomLabel.Visible = mix;
         StopPreview();
         if (_page == 0)
         {
             _step.Text = "Step 1 of 3";
             _body.Text = "These are your headphones. If the highlight is right, press Next.";
             _next.Text = "Next";
+            _next.Enabled = true;
         }
         else if (_page == 1)
         {
             _step.Text = "Step 2 of 3";
             _body.Text = "A step plays, then a shot. The step should come through clearer than the shot.";
             _next.Text = "Next";
+            _next.Enabled = true;
             PlayPreview();
         }
         else
@@ -106,13 +130,13 @@ sealed class GuideForm : Form
             }
             else if (game is null)
             {
-                _body.Text = "Jesus Kpekpes is not in the playback list yet. Pick the headphones now. Turn on starts when that device is there.";
+                _body.Text = "Jesus Kpekpes is not in the playback list yet. The sliders are ready. Turn on starts when that device is there.";
                 _next.Text = "Turn on";
                 _next.Enabled = false;
             }
             else
             {
-                _body.Text = $"The game uses {Engine.DeviceName}. You hear it in {Selected.Name}. Nothing else sits in between.";
+                _body.Text = $"The game uses {Engine.DeviceName}. You hear it in {Selected.Name}.";
                 _next.Text = _live is null ? "Turn on" : "Turn off";
                 _next.Enabled = true;
             }
@@ -135,6 +159,13 @@ sealed class GuideForm : Form
     AudioDevice? GameDevice() =>
         _devices.FirstOrDefault(d => d.Name.Contains(Engine.DeviceName, StringComparison.OrdinalIgnoreCase) && d.Id != Selected?.Id);
 
+    void ApplyMix()
+    {
+        _loudLabel.Text = "Footstep loudness  " + _loud.Value;
+        _roomLabel.Text = "Surround quiet  " + _room.Value;
+        _live?.SetMix(_loud.Value / 100f, _room.Value / 100f);
+    }
+
     void TurnOn()
     {
         var phones = Selected;
@@ -143,6 +174,7 @@ sealed class GuideForm : Form
         _live?.Dispose();
         _live = new Live(game.Id, phones.Id);
         _live.Start();
+        ApplyMix();
         Remember(phones.Id, true);
         if (_windows.Checked) Startup.Enable();
         else Startup.Disable();
@@ -171,6 +203,7 @@ sealed class GuideForm : Form
         if (game is null) return;
         _live = new Live(game.Id, phones.Id);
         _live.Start();
+        ApplyMix();
         ShowPage(2);
         _body.Text = $"On. The game uses {Engine.DeviceName}. You hear it in {phones.Name}.";
         WindowState = FormWindowState.Minimized;
@@ -203,7 +236,6 @@ sealed class GuideForm : Form
         using var enumerator = new MMDeviceEnumerator();
         _previewDevice = enumerator.GetDevice(Selected.Id);
         _preview = new WasapiOut(_previewDevice, AudioClientShareMode.Shared, true, (int)Math.Max(1, Selected.PeriodMs));
-
         _preview.Init(buffer);
         _preview.Play();
     }
