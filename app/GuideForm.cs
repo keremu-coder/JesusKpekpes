@@ -1,4 +1,3 @@
-using System.Reflection;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 
@@ -13,17 +12,20 @@ sealed class GuideForm : Form
     readonly Label _body = new();
     readonly Button _next = new();
     readonly Button _back = new();
-    readonly CheckBox _windows = new();
+    readonly CheckBox _seven = new();
     readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
     readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
     readonly Label _loudLabel = new();
     readonly Label _roomLabel = new();
+    readonly ComboBox _preset = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly System.Windows.Forms.Timer _save = new() { Interval = 400 };
     readonly NotifyIcon _tray = new();
     int _page;
     Live? _live;
     WasapiOut? _preview;
     MMDevice? _previewDevice;
     bool _exit;
+    bool _keepOthers;
     readonly bool _resume;
 
     public GuideForm(bool resume)
@@ -55,11 +57,6 @@ sealed class GuideForm : Form
         var selected = _devices.FindIndex(d => d.Id == Devices.DefaultId());
         if (_list.Items.Count > 0) _list.SelectedIndex = Math.Max(0, selected);
 
-        _windows.SetBounds(28, 444, 404, 28);
-        _windows.Text = "Start with Windows";
-        _windows.Checked = true;
-        _windows.Visible = false;
-
         _loudLabel.SetBounds(28, 200, 404, 22);
         _loudLabel.Text = "Footstep hit";
         _loud.SetBounds(28, 224, 404, 40);
@@ -70,15 +67,25 @@ sealed class GuideForm : Form
         _room.Visible = false;
         _loudLabel.Visible = false;
         _roomLabel.Visible = false;
-        _loud.Scroll += (_, _) => ApplyMix();
-        _room.Scroll += (_, _) => ApplyMix();
+        _loud.Scroll += (_, _) => ScheduleSave();
+        _room.Scroll += (_, _) => ScheduleSave();
+        _preset.Items.AddRange(new object[] { "Drop", "Well" });
+        _preset.SelectedIndex = 0;
+        _preset.SetBounds(28, 352, 180, 32);
+        _seven.Text = "7.1";
+        _seven.SetBounds(230, 348, 160, 28);
+        _preset.Visible = false;
+        _seven.Visible = false;
+        _preset.SelectedIndexChanged += (_, _) => ScheduleSave();
+        _seven.CheckedChanged += (_, _) => ScheduleSave();
+        _save.Tick += (_, _) => { _save.Stop(); if (_on && Selected is not null) TurnOn(); };
 
         Style(_back, "Back", 28, 492, 120);
         Style(_next, "Next", 252, 492, 180);
         _back.Click += (_, _) => ShowPage(_page - 1);
         _next.Click += (_, _) => OnNext();
 
-        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _windows, _back, _next]);
+        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _back, _next]);
         _tray.Icon = SystemIcons.Application;
         _tray.Text = "Jesus Kpekpes";
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
@@ -97,12 +104,14 @@ sealed class GuideForm : Form
         _page = Math.Clamp(page, 0, 2);
         _back.Visible = _page > 0;
         _list.Visible = _page == 0;
-        _windows.Visible = _page == 2;
         var mix = _page == 2;
         _loud.Visible = mix;
         _room.Visible = mix;
         _loudLabel.Visible = mix;
         _roomLabel.Visible = mix;
+        _preset.Visible = mix;
+        _seven.Visible = mix;
+        _seven.Enabled = Selected is { Channels: >= 8 };
         StopPreview();
         if (_page == 0)
         {
@@ -129,9 +138,9 @@ sealed class GuideForm : Form
             }
             else
             {
-                _body.Text = Selected.Channels >= 8
-                    ? $"The game stays on {Selected.Name}. Secure Boot stays on."
-                    : $"{Selected.Name} is not 7.1. Set that device to 7.1 in Windows, or the side step is already gone.";
+                _body.Text = _seven.Checked
+                    ? $"7.1 on {Selected.Name}. The game must actually be set to 7.1."
+                    : $"Stereo on {Selected.Name}. The game can stay at 2 channels.";
                 _next.Text = _on ? "Turn off" : "Turn on";
                 _next.Enabled = true;
             }
@@ -153,26 +162,44 @@ sealed class GuideForm : Form
 
     bool _on;
 
-    void ApplyMix()
+    void ScheduleSave()
     {
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
-        _live?.SetMix(_loud.Value / 100f, _room.Value / 100f);
-        if (_on && Selected is not null) InPlace.Apply(Selected.Name, _loud.Value, _room.Value);
+        if (!_on) return;
+        _save.Stop();
+        _save.Start();
     }
+
+    MixPlan Current(string name) => new(
+        _preset.SelectedIndex == 1 ? Preset.Well : Preset.Drop,
+        _seven.Checked ? Route.Surround : Route.Stereo,
+        _loud.Value,
+        _room.Value,
+        name);
 
     void TurnOn()
     {
         var phones = Selected;
         if (phones is null) return;
-        _on = InPlace.Apply(phones.Name, _loud.Value, _room.Value);
+        if (_seven.Checked && phones.Channels < 8)
+        {
+            _seven.Checked = false;
+            _body.Text = $"{phones.Name} is not 7.1. Stereo is on instead.";
+        }
+        var result = InPlace.Apply(phones.Id, Current(phones.Name), _keepOthers);
+        _on = result is WriteResult.On or WriteResult.NotAttached;
         Remember(phones.Id, _on);
-        if (_windows.Checked) Startup.Enable();
-        else Startup.Disable();
         _next.Text = _on ? "Turn off" : "Turn on";
-        _body.Text = _on
-            ? $"On. Leave the game on {phones.Name}. You can close this window."
-            : "Equalizer APO is not installed. The game stays on these headphones. Secure Boot stays on.";
+        _body.Text = result switch
+        {
+            WriteResult.On => $"On. Leave the game on {phones.Name}.",
+            WriteResult.NotAttached => "The file is written. Equalizer APO is not turned on for these headphones yet.",
+            WriteResult.Conflict => "HeSuVi, Rara, or Peace is already there. Press Turn on again to keep that setup.",
+            WriteResult.Denied => "Windows blocked the write. Press Yes if it asks.",
+            _ => "Equalizer APO is not installed. Secure Boot stays on.",
+        };
+        if (result == WriteResult.Conflict) _keepOthers = true;
         _tray.Visible = _on;
     }
 
@@ -180,6 +207,7 @@ sealed class GuideForm : Form
     {
         InPlace.Clear();
         _on = false;
+        _keepOthers = false;
         _live?.Dispose();
         _live = null;
         _tray.Visible = false;
@@ -194,7 +222,7 @@ sealed class GuideForm : Form
         var phones = _devices.FirstOrDefault(d => d.Id == saved.Headphones);
         if (phones is null) return;
         _list.SelectedItem = phones;
-        _on = InPlace.Apply(phones.Name, _loud.Value, _room.Value);
+        _on = InPlace.Apply(phones.Id, Current(phones.Name), true) is WriteResult.On or WriteResult.NotAttached;
         if (!_on) return;
         ShowPage(2);
         _body.Text = $"On. The game stays on {phones.Name}.";
@@ -206,17 +234,20 @@ sealed class GuideForm : Form
         if (Selected is null) return;
         const int sr = 48000;
         const int n = sr * 2;
-        var input = Enumerable.Range(0, 8).Select(_ => new float[n]).ToArray();
+        var plan = Current(Selected.Name);
+        var left = new float[n];
+        var right = new float[n];
+        var side = new float[n];
         for (var i = sr / 2; i < sr / 2 + 120; i++)
         {
             var env = MathF.Sin((i - sr / 2) / 120f * MathF.PI);
-            input[Engine.Sl][i] = MathF.Sin(2 * MathF.PI * 3200 * i / sr) * 0.25f * env;
+            var sample = MathF.Sin(2 * MathF.PI * 3200 * i / sr) * 0.25f * env;
+            if (plan.Route == Route.Stereo) { left[i] = sample; right[i] = sample * 0.3f; }
+            else side[i] = sample;
         }
         for (var i = sr; i < sr + (int)(sr * 0.15); i++)
-            input[Engine.L][i] = MathF.Sin(2 * MathF.PI * 90 * i / sr) * 0.8f;
-        var left = new float[n];
-        var right = new float[n];
-        new Engine(sr).Process(input, left, right);
+            left[i] = right[i] = MathF.Sin(2 * MathF.PI * 90 * i / sr) * 0.8f;
+        Mix.Process(plan, left, right, side, side);
         var interleaved = new byte[n * 8];
         for (var i = 0; i < n; i++)
         {
@@ -276,7 +307,7 @@ sealed class GuideForm : Form
         button.FlatAppearance.BorderSize = 0;
     }
 
-    static void Remember(string? headphones, bool on)
+    void Remember(string? headphones, bool on)
     {
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes");
         Directory.CreateDirectory(dir);
@@ -284,10 +315,14 @@ sealed class GuideForm : Form
         [
             "headphones=" + headphones,
             "on=" + (on ? "1" : "0"),
+            "hit=" + _loud.Value,
+            "quiet=" + _room.Value,
+            "preset=" + (_preset.SelectedIndex == 1 ? "well" : "drop"),
+            "route=" + (_seven.Checked ? "surround" : "stereo"),
         ]);
     }
 
-    static (string? Headphones, bool? On) Remembered()
+    (string? Headphones, bool? On) Remembered()
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes", "settings.txt");
         if (!File.Exists(path)) return (null, null);
@@ -297,30 +332,10 @@ sealed class GuideForm : Form
             .ToDictionary(p => p[0], p => p[1]);
         map.TryGetValue("headphones", out var headphones);
         map.TryGetValue("on", out var on);
+        if (map.TryGetValue("hit", out var hit) && int.TryParse(hit, out var hitValue)) _loud.Value = Math.Clamp(hitValue, 0, 100);
+        if (map.TryGetValue("quiet", out var quiet) && int.TryParse(quiet, out var quietValue)) _room.Value = Math.Clamp(quietValue, 0, 100);
+        if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "well" ? 1 : 0;
+        if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
         return (headphones, on == "1");
-    }
-}
-
-static class Startup
-{
-    static string Link => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Jesus Kpekpes.lnk");
-
-    public static void Enable()
-    {
-        var shellType = Type.GetTypeFromProgID("WScript.Shell");
-        if (shellType is null || Environment.ProcessPath is null) return;
-        var shell = Activator.CreateInstance(shellType);
-        var shortcut = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, [Link]);
-        if (shortcut is null) return;
-        var kind = shortcut.GetType();
-        kind.InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut, [Environment.ProcessPath]);
-        kind.InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut, ["--on"]);
-        kind.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut, [AppContext.BaseDirectory]);
-        kind.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
-    }
-
-    public static void Disable()
-    {
-        if (File.Exists(Link)) File.Delete(Link);
     }
 }
