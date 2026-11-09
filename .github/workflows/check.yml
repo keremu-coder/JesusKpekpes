@@ -19,4 +19,17 @@ jobs:
         with:
           dotnet-version: 8.0.x
       - run: dotnet run --project tests/EngineTests.csproj
+      - name: Build the plugin
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS=%%i
+          call "%VS%\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /LD /O2 /Fe:plugin\JesusKpekpesTune.dll plugin\tune.c
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JesusKpekpesTune
+          path: plugin/JesusKpekpesTune.dll
+      - name: The app must ship the plugin
+        shell: pwsh
+        run: if (-not (Test-Path plugin/JesusKpekpesTune.dll)) { throw 'JesusKpekpesTune.dll was not built' }
       - run: dotnet build app/JesusKpekpes.App.csproj -c Release

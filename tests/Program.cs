@@ -106,6 +106,9 @@ Check(!Mix.DeviceMatches("Headphones (Realtek(R) Audio)", deviceLine), "the Wind
 Check(Mix.Switch(false) == "", "off must not include the filter file");
 var withPlugin = Mix.Config(well, @"C:\Games\JesusKpekpesTune.dll");
 Check(withPlugin.Contains("VSTPlugin: Library \"C:\\Games\\JesusKpekpesTune.dll\""), "our plugin must be named when the file is present");
+Check(withPlugin.Contains("Preamp: 0.0 dB"), "Safe must not add level on top of the plugin");
+var loudPlugin = Mix.Config(well with { Level = Level.Loud }, @"C:\Games\JesusKpekpesTune.dll");
+Check(loudPlugin.Contains("Preamp: 3.0 dB"), "Loud must reach the file Equalizer APO reads");
 Check(!Mix.Config(well).Contains("VSTPlugin"), "the equalizer file stays plain when the plugin was not built");
 var restored = Mix.StripInclude("Preamp: 0 dB\r\nInclude: jesus-kpekpes\\switch.txt\r\nInclude: rara.txt\r\n");
 Check(restored.Contains("rara.txt") && !restored.Contains("jesus-kpekpes"), "turn off must remove only this tune");
