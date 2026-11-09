@@ -99,4 +99,12 @@ var roomBand = Energy(low, sr - 4000, 4000);
 Check(stepBand > roomBand * 2, $"step band {stepBand} should sit well above the room {roomBand}");
 Check(stepBand <= 1.05f, $"step band clipped at {stepBand}");
 
+Check(text.Contains("Device: all"), "config must hand the device scope back");
+Check(text.TrimEnd().EndsWith("Channel: all"), "config must end with Channel: all");
+Check(!text.Contains("(") && Mix.DeviceName("Headphones (Realtek High Definition Audio)") == "Headphones Realtek High Definition Audio", "device name should drop the brackets");
+Check(Mix.Switch(true, @"C:\Program Files\EqualizerAPO\config\jesus-kpekpes") == "Include: C:\\Program Files\\EqualizerAPO\\config\\jesus-kpekpes\\on.txt\r\n", "switch should include the full path");
+Check(Mix.Conflicts("VSTPlugin: Library x.dll").Contains("VST plugins"), "VST plugins should be noticed");
+Check(Mix.Config(new MixPlan(Preset.Drop, Route.Surround, 100, 100, "Headphones")).Contains("0.7*C"), "7.1 must fold the center in");
+Check(Mix.PreampDb(drop) < -1f, "preamp should leave real headroom");
+
 Console.WriteLine("engine ok");

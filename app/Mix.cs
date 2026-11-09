@@ -18,7 +18,7 @@ static class Mix
         var filters = Filters(plan);
         var preamp = PreampDb(filters, plan.Route);
         var text = new System.Text.StringBuilder();
-        text.Append("Device: ").Append(plan.Device).Append("\r\n");
+        text.Append("Device: ").Append(DeviceName(plan.Device)).Append("\r\n");
         if (plan.Route == Route.Surround)
         {
             Write(text, n, "C", filters.Where(f => f.Channels == "C"));
@@ -26,7 +26,7 @@ static class Mix
             Write(text, n, "SL SR RL RR", filters.Where(f => f.Channels == "SL SR RL RR"));
             text.Append("Channel: LFE\r\n");
             text.Append("Preamp: ").Append(Lfe(plan).ToString("0.0", n)).Append(" dB\r\n");
-            text.Append("Copy: L=L+0.7*SL+0.5*RL R=R+0.7*SR+0.5*RR\r\n");
+            text.Append("Copy: L=L+0.7*SL+0.5*RL+0.7*C R=R+0.7*SR+0.5*RR+0.7*C\r\n");
             text.Append("Channel: C LFE SL SR RL RR\r\n");
             text.Append("Preamp: -120 dB\r\n");
         }
@@ -36,10 +36,22 @@ static class Mix
         }
         text.Append("Channel: all\r\n");
         text.Append("Preamp: ").Append(preamp.ToString("0.0", n)).Append(" dB\r\n");
+        // Hand the scope back so nothing loaded after us (HeSuVi, Rara, the user's own lines) inherits it.
+        text.Append("Device: all\r\n");
+        text.Append("Channel: all\r\n");
         return text.ToString();
     }
 
-    public static string Switch(bool on) => on ? "Include: jesus-kpekpes\\on.txt\r\n" : "";
+    /// <summary>Equalizer APO matches devices by name without the brackets Windows adds, e.g. "Headphones Realtek High Definition Audio".</summary>
+    public static string DeviceName(string friendly)
+    {
+        var plain = friendly.Replace("(", " ").Replace(")", " ");
+        return string.Join(" ", plain.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    /// <summary>On: include our filter file by its full path, so it does not depend on how Equalizer APO resolves relative paths. Off: empty.</summary>
+    public static string Switch(bool on, string? folder = null) =>
+        on ? "Include: " + (folder is null ? "jesus-kpekpes" : folder) + "\\on.txt\r\n" : "";
 
     public static IReadOnlyList<string> Conflicts(string text)
     {
@@ -48,6 +60,8 @@ static class Mix
         if (lower.Contains("hesuvi")) found.Add("HeSuVi");
         if (lower.Contains("rara")) found.Add("Rara");
         if (lower.Contains("peace")) found.Add("Peace");
+        if (lower.Contains("vstplugin:")) found.Add("VST plugins");
+        if (lower.Contains("convolution:")) found.Add("Convolution");
         return found;
     }
 
@@ -108,7 +122,7 @@ static class Mix
             if (route == Route.Surround) db += 6.8f;
             if (db > worst) worst = db;
         }
-        return worst <= 0.05f ? 0 : -(worst + 0.1f);
+        return worst <= 0.05f ? 0 : -(worst + 0.5f);
     }
 
     static Band[] Filters(MixPlan plan)
