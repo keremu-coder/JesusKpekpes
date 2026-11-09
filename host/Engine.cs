@@ -24,6 +24,8 @@ public sealed class Engine
     float _frontGain = 1;
     float _loudEnv;
     float _loudGain = 1;
+    public float Loudness { get; set; } = 1f;
+    public float SurroundQuiet { get; set; } = 1f;
 
     static readonly int[] Surround = [Sl, Sr, Rl, Rr];
 
@@ -96,14 +98,14 @@ public sealed class Engine
                 var full = MathF.Abs(ch[c]);
                 _fullFast[s] += (full - _fullFast[s]) * _fastCoef;
                 _fullSlow[s] += (full - _fullSlow[s]) * _fullSlowCoef;
-                if (_fullFast[s] < _fullSlow[s] * 1.25f) ch[c] *= 0.22f;
+                if (_fullFast[s] < _fullSlow[s] * 1.25f) ch[c] *= 1f - SurroundQuiet * 0.78f;
                 var band = _step[s].Tick(ch[c]);
                 var mag = MathF.Abs(band);
                 _bandFast[s] += (mag - _bandFast[s]) * _fastCoef;
                 _bandSlow[s] += (mag - _bandSlow[s]) * _bandSlowCoef;
                 var rise = _bandFast[s] / (_bandSlow[s] + 1e-5f);
                 var lift = Math.Clamp((rise - 1.45f) / 1.6f, 0, 1);
-                ch[c] += band * lift * 3.6f;
+                ch[c] += band * lift * (1.2f + Loudness * 2.4f);
             }
 
             left[i] = 0.72f * ch[L] + 0.2f * ch[C] + 1.15f * ch[Sl] + 0.8f * ch[Rl];
@@ -111,7 +113,7 @@ public sealed class Engine
             var peak = MathF.Max(MathF.Abs(left[i]), MathF.Abs(right[i]));
             var follow = peak > _loudEnv ? _loudAttack : _loudRelease;
             _loudEnv += (peak - _loudEnv) * follow;
-            var target = _loudEnv < 0.015f ? 2.6f : _loudEnv < 0.08f ? 1.9f : 1f;
+            var target = _loudEnv < 0.015f ? 1f + Loudness * 1.6f : _loudEnv < 0.08f ? 1f + Loudness * 0.9f : 1f;
             _loudGain += (target - _loudGain) * _loudAttack;
             left[i] = Math.Clamp(left[i] * _loudGain, -1, 1);
             right[i] = Math.Clamp(right[i] * _loudGain, -1, 1);
