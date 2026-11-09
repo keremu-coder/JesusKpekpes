@@ -43,6 +43,12 @@ sealed class Live : IDisposable
         _capture.StartRecording();
     }
 
+    public void SetMix(float loudness, float surroundQuiet)
+    {
+        _engine.Loudness = loudness;
+        _engine.SurroundQuiet = surroundQuiet;
+    }
+
     void OnData(object? sender, WaveInEventArgs e)
     {
         var format = _capture.WaveFormat;
