@@ -151,4 +151,21 @@ Check(Mix.PreampDb(drop) < -1f, "preamp should leave real headroom");
     Check(CodProfile.Chosen(true).Length == CodProfile.Core.Length + CodProfile.Lowest.Length, "lowest option adds its own keys");
 }
 
+// ---- Loudness levels ----
+{
+    var safeDrop = new MixPlan(Preset.Drop, Route.Stereo, 100, 100, "Headphones", Level.Safe);
+    var balDrop = safeDrop with { Level = Level.Balanced };
+    var loudDrop = safeDrop with { Level = Level.Loud };
+    var s = Mix.PreampDb(safeDrop);
+    var b = Mix.PreampDb(balDrop);
+    var l = Mix.PreampDb(loudDrop);
+    Check(s < -1f, $"Safe should keep real headroom, got {s}");
+    Check(b >= s && l >= b, $"each level should be at least as loud as the one before: {s}, {b}, {l}");
+    Check(b <= 0f && l <= 0f, "no level may ever add gain");
+    Check(b - s <= 4.01f && l - s <= 8.01f, "levels are capped so they stay near the safe value");
+    Check(l > s, $"Loud should be louder than Safe, got {s} and {l}");
+    Check(Mix.Config(loudDrop).Contains("Preamp: "), "level config still writes a preamp");
+    Check(Mix.Config(drop).Contains("Fc 6500"), "the scuff band should be in the footstep tune");
+}
+
 Console.WriteLine("engine ok");
