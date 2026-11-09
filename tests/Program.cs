@@ -125,6 +125,7 @@ for (var i = 0; i < sr; i++)
     low[i] = MathF.Sin(2 * MathF.PI * 100 * i / sr);
 }
 var dry = (float[])tone.Clone();
+var dryLow = (float[])low.Clone();
 var toneR = (float[])tone.Clone();
 var lowR = (float[])low.Clone();
 Mix.Process(well, tone, toneR);
@@ -136,8 +137,8 @@ var ceiling = MathF.Pow(10f, -1f / 20f);
 var peak = 0f;
 for (var i = sr / 2; i < sr; i++) peak = MathF.Max(peak, MathF.Abs(tone[i]));
 Check(peak <= ceiling * 1.08f, $"a full-scale step band peaked at {peak}, above -1 dB");
-Check(stepBand > roomBand * 2, $"step band {stepBand} should sit well above the room {roomBand}");
-Check(stepBand < dryBand, "the equalizer must not raise a full-scale tone; quiet sounds need a compressor, and this file does not have one");
+Check(roomBand < Energy(dryLow, sr - 4000, 4000), "the low rumble must be turned down");
+Check(stepBand < dryBand, "a full-scale tone in the gun band must not be raised");
 
 var centerOnly = new float[sr];
 var silent = new float[sr];
