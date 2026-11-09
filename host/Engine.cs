@@ -9,21 +9,22 @@ public sealed class Engine
 
     readonly Biquad[][] _correction;
     readonly Biquad[] _step;
+    readonly Biquad[] _body;
+    readonly Biquad[] _splash;
     readonly float[] _bandFast;
     readonly float[] _bandSlow;
     readonly float[] _fullFast;
     readonly float[] _fullSlow;
+    readonly float[] _drop = new float[4];
+    readonly float[] _hit = new float[4];
     readonly float _fastCoef;
     readonly float _bandSlowCoef;
     readonly float _fullSlowCoef;
     readonly float _frontAttack;
     readonly float _frontRelease;
-    readonly float _loudAttack;
-    readonly float _loudRelease;
+    readonly float _dropDecay;
     float _frontEnv;
     float _frontGain = 1;
-    float _loudEnv;
-    float _loudGain = 1;
     public float Loudness { get; set; } = 1f;
     public float SurroundQuiet { get; set; } = 1f;
 
@@ -32,6 +33,8 @@ public sealed class Engine
     public Engine(int sampleRate)
     {
         _step = [Bandpass(3400, 1.2f, sampleRate), Bandpass(3400, 1.2f, sampleRate), Bandpass(3400, 1.2f, sampleRate), Bandpass(3400, 1.2f, sampleRate)];
+        _body = [Bandpass(280, 0.8f, sampleRate), Bandpass(280, 0.8f, sampleRate), Bandpass(280, 0.8f, sampleRate), Bandpass(280, 0.8f, sampleRate)];
+        _splash = [Bandpass(4800, 1.4f, sampleRate), Bandpass(4800, 1.4f, sampleRate), Bandpass(4800, 1.4f, sampleRate), Bandpass(4800, 1.4f, sampleRate)];
         _bandFast = new float[4];
         _bandSlow = new float[4];
         _fullFast = new float[4];
@@ -41,8 +44,7 @@ public sealed class Engine
         _fullSlowCoef = 1 - MathF.Exp(-1f / (sampleRate * 0.18f));
         _frontAttack = 1 - MathF.Exp(-1f / (sampleRate * 0.003f));
         _frontRelease = 1 - MathF.Exp(-1f / (sampleRate * 0.08f));
-        _loudAttack = 1 - MathF.Exp(-1f / (sampleRate * 0.005f));
-        _loudRelease = 1 - MathF.Exp(-1f / (sampleRate * 0.12f));
+        _dropDecay = MathF.Exp(-1f / (sampleRate * 0.022f));
         (float Hz, float Db, float Q)[] curve = [(80f, -4.5f, 0.9f), (200f, 4.5f, 0.8f), (3500f, 4.5f, 1.2f), (7000f, 2.5f, 1.1f)];
         _correction = new Biquad[8][];
         for (var c = 0; c < 8; c++)
@@ -99,24 +101,23 @@ public sealed class Engine
                 _fullFast[s] += (full - _fullFast[s]) * _fastCoef;
                 _fullSlow[s] += (full - _fullSlow[s]) * _fullSlowCoef;
                 if (_fullFast[s] < _fullSlow[s] * 1.25f) ch[c] *= 1f - SurroundQuiet * 0.78f;
+                var body = _body[s].Tick(ch[c]);
                 var band = _step[s].Tick(ch[c]);
+                var splash = _splash[s].Tick(ch[c]);
                 var mag = MathF.Abs(band);
                 _bandFast[s] += (mag - _bandFast[s]) * _fastCoef;
                 _bandSlow[s] += (mag - _bandSlow[s]) * _bandSlowCoef;
                 var rise = _bandFast[s] / (_bandSlow[s] + 1e-5f);
-                var lift = Math.Clamp((rise - 1.45f) / 1.6f, 0, 1);
-                ch[c] += band * lift * (1.2f + Loudness * 2.4f);
+                var lift = Math.Clamp((rise - 1.35f) / 1.4f, 0, 1);
+                if (lift > _hit[s] && lift > 0.35f) _drop[s] = body * 1.4f + splash * 0.6f;
+                _drop[s] *= _dropDecay;
+                _hit[s] = lift;
+                ch[c] += (body * 1.3f + band * 1.1f + splash * 0.5f) * lift * Loudness * 3.2f;
+                ch[c] += _drop[s] * Loudness * 2.2f;
             }
 
-            left[i] = 0.72f * ch[L] + 0.2f * ch[C] + 1.15f * ch[Sl] + 0.8f * ch[Rl];
-            right[i] = 0.72f * ch[R] + 0.2f * ch[C] + 1.15f * ch[Sr] + 0.8f * ch[Rr];
-            var peak = MathF.Max(MathF.Abs(left[i]), MathF.Abs(right[i]));
-            var follow = peak > _loudEnv ? _loudAttack : _loudRelease;
-            _loudEnv += (peak - _loudEnv) * follow;
-            var target = _loudEnv < 0.015f ? 1f + Loudness * 1.6f : _loudEnv < 0.08f ? 1f + Loudness * 0.9f : 1f;
-            _loudGain += (target - _loudGain) * _loudAttack;
-            left[i] = Math.Clamp(left[i] * _loudGain, -1, 1);
-            right[i] = Math.Clamp(right[i] * _loudGain, -1, 1);
+            left[i] = Math.Clamp(0.72f * ch[L] + 0.2f * ch[C] + 1.15f * ch[Sl] + 0.8f * ch[Rl], -1, 1);
+            right[i] = Math.Clamp(0.72f * ch[R] + 0.2f * ch[C] + 1.15f * ch[Sr] + 0.8f * ch[Rr], -1, 1);
         }
     }
 
