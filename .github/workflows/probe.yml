@@ -16,90 +16,48 @@ jobs:
           $best = Invoke-RestMethod -Uri 'https://sourceforge.net/projects/equalizerapo/best_release.json' -UserAgent 'curl/8.0' -TimeoutSec 60
           $win = $best.platform_releases.windows
           if (-not $win.filename) { throw 'best_release.json has no windows file' }
-          Say "file: $($win.filename)"
-          Say "advertised bytes: $($win.bytes)"
-          Say "advertised md5: $($win.md5sum)"
-          Say "date: $($win.date)"
           $stable = 'https://sourceforge.net/projects/equalizerapo/files' + $win.filename + '/download'
           Say "stable url: $stable"
           $dest = Join-Path $env:RUNNER_TEMP 'apo.exe'
           Invoke-WebRequest -Uri $stable -OutFile $dest -UserAgent 'curl/8.0' -MaximumRedirection 10 -TimeoutSec 180
-          $size = (Get-Item $dest).Length
-          $head = [System.IO.File]::ReadAllBytes($dest)[0..1]
-          $pe = ($head[0] -eq 0x4D -and $head[1] -eq 0x5A)
-          Say "downloaded bytes: $size"
-          Say "pe header: $pe"
-          if (-not $pe) { throw 'download is not a Windows executable' }
-          if ([int64]$win.bytes -ne $size) { throw "size $($size) does not match advertised $($win.bytes)" }
-          $md5 = (Get-FileHash $dest -Algorithm MD5).Hash.ToLower()
-          Say "md5: $md5 match: $($md5 -eq ([string]$win.md5sum).ToLower())"
-          if ($md5 -ne ([string]$win.md5sum).ToLower()) { throw 'md5 does not match best_release.json' }
-          Say "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
-          $sig = Get-AuthenticodeSignature $dest
-          Say "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
+          $sha = (Get-FileHash $dest -Algorithm SHA256).Hash
+          Say "sha256: $sha"
+          if ($sha -ne '7403BE7427BBE1936A40DDED082829B6E217FC4F5990FEE5CBA501F0AE055AFA') { throw 'unexpected Equalizer APO hash' }
           $proc = Start-Process -FilePath $dest -ArgumentList '/S' -PassThru
-          if (-not $proc.WaitForExit(45000)) {
-            Say 'setup still open after 45s because DeviceSelector waits for a click; stopping it'
-            Get-Process -Name 'DeviceSelector' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Say 'setup process already closed' }
-            Start-Sleep -Seconds 1
-          } else {
-            Say "silent install exit code: $($proc.ExitCode)"
-          }
           $root = Join-Path $env:ProgramFiles 'EqualizerAPO'
-          Say "install folder exists: $(Test-Path $root)"
-          if (Test-Path $root) {
-            Say "files: $((Get-ChildItem $root -Name) -join ', ')"
-            $cfg = Join-Path $root 'config'
-            if (Test-Path $cfg) { Say "config files: $((Get-ChildItem $cfg -Name) -join ', ')" }
-            Say "configurator exists: $(Test-Path (Join-Path $root 'Configurator.exe'))"
+          $need = @('EqualizerAPO.dll','DeviceSelector.exe','Editor.exe') | ForEach-Object { Join-Path $root $_ }
+          $ready = $false
+          foreach ($i in 1..90) {
+            if (-not ($need | Where-Object { -not (Test-Path -LiteralPath $_) })) { $ready = $true; break }
+            Start-Sleep -Seconds 1
           }
+          Get-Process -Name 'DeviceSelector','Configurator' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          if (-not $proc.HasExited) { try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Say 'setup already closed' } }
+          Say "files ready: $ready"
+          Say "configurator.exe exists: $(Test-Path (Join-Path $root 'Configurator.exe'))"
+          Say "device selector exists: $(Test-Path (Join-Path $root 'DeviceSelector.exe'))"
+          if (-not $ready) { throw 'Equalizer APO files were not copied' }
       - name: ReaPlugs
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           function Say([string]$text) { Write-Host $text }
-          function Join-Vendor([string]$href) {
-            if ($href -match '^https?://') { return $href }
-            if ($href.StartsWith('/')) { return 'https://www.reaper.fm' + $href }
-            return 'https://www.reaper.fm/reaplugs/' + $href
-          }
-          $page = Invoke-WebRequest -Uri 'https://www.reaper.fm/reaplugs/' -UserAgent 'curl/8.0' -TimeoutSec 60
-          $links = @($page.Links | Where-Object { $_.href -match 'reaplugs' } | ForEach-Object { $_.href })
-          Say "links: $($links -join ' | ')"
-          $pick = $links | Where-Object { $_ -match 'x64' -and $_ -match '\.exe($|\?)' } | Select-Object -First 1
-          Say "picked: $pick"
-          if (-not $pick) { throw 'no x64 ReaPlugs installer link on the official page' }
-          $url = Join-Vendor $pick
-          Say "url: $url"
+          $url = 'https://www.reaper.fm/reaplugs/reaplugs236_x64-install.exe'
           $dest = Join-Path $env:RUNNER_TEMP 'reaplugs.exe'
-          Invoke-WebRequest -Uri $url -OutFile $dest -UserAgent 'curl/8.0' -MaximumRedirection 10 -TimeoutSec 180
-          $size = (Get-Item $dest).Length
-          $head = [System.IO.File]::ReadAllBytes($dest)[0..1]
-          $pe = ($head[0] -eq 0x4D -and $head[1] -eq 0x5A)
-          Say "downloaded bytes: $size"
-          Say "pe header: $pe"
-          if (-not $pe) { throw 'download is not a Windows executable' }
-          Say "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
-          $sig = Get-AuthenticodeSignature $dest
-          Say "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
-          $proc = Start-Process -FilePath $dest -ArgumentList '/S' -PassThru
-          if (-not $proc.WaitForExit(45000)) {
-            Say 'ReaPlugs setup still open after 45s; stopping it'
-            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Say 'setup process already closed' }
-          } else {
-            Say "silent install exit code: $($proc.ExitCode)"
+          Invoke-WebRequest -Uri $url -OutFile $dest -UserAgent 'curl/8.0' -TimeoutSec 180
+          $sha = (Get-FileHash $dest -Algorithm SHA256).Hash
+          Say "sha256: $sha"
+          if ($sha -ne '1654F1F78D746FC87A6F6D078A8F928EA61C7B49997B1F2C07DFC870F8FA6C10') { throw 'unexpected ReaPlugs hash' }
+          $dir = Join-Path $env:ProgramFiles 'VSTPlugins\ReaPlugs'
+          $proc = Start-Process -FilePath $dest -ArgumentList @('/S', "/D=$dir") -PassThru
+          $dll = Join-Path $dir 'reacomp-standalone.dll'
+          $ready = $false
+          foreach ($i in 1..120) {
+            if ((Test-Path -LiteralPath $dll) -and (Test-Path -LiteralPath (Join-Path $dir 'reaxcomp-standalone.dll'))) { $ready = $true; break }
+            Start-Sleep -Seconds 1
           }
-          $places = @(
-            'C:\Program Files\VSTPlugins',
-            'C:\Program Files\ReaPlugs',
-            'C:\Program Files (x86)\VSTPlugins',
-            'C:\Program Files (x86)\ReaPlugs'
-          )
-          foreach ($place in $places) {
-            if (-not (Test-Path $place)) { continue }
-            $names = Get-ChildItem $place -File -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -match 'reacomp|reaxcomp' } |
-              Select-Object -ExpandProperty Name
-            Say "found in ${place}: $($names -join ', ')"
-          }
+          if (-not $proc.HasExited) { try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Say 'setup already closed' } }
+          Say "exit: $(if ($proc.HasExited) { $proc.ExitCode } else { 'killed' })"
+          Say "reacomp: $(Test-Path -LiteralPath $dll)"
+          if ($ready) { Say "files: $((Get-ChildItem $dir -Name) -join ', ')" }
+          if (-not $ready) { throw 'ReaPlugs did not write reacomp-standalone.dll' }
