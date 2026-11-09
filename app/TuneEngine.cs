@@ -1,11 +1,11 @@
 namespace JesusKpekpes;
 
-// The text equalizer runs first. This stage lifts a quiet foot and trims only the gun's band.
-// A gun on one ear does not turn the other ear down, and it does not turn the foot down with it.
+// The text equalizer runs first, at the sample rate it is given.
+// This stage raises only the foot band. A gun is trimmed in its own band, on that ear alone.
 public static class TuneEngine
 {
     public static void Run(float[] left, float[] right, int sampleRate) =>
-        Mix.Process(new MixPlan(Preset.Drop, Route.Stereo, 100, 100, ""), left, right);
+        Mix.Process(new MixPlan(Preset.Drop, Route.Stereo, 100, 100, ""), left, right, sampleRate: Rate(sampleRate));
 
     public static void Run(float[][] ears, int sampleRate)
     {
@@ -19,30 +19,35 @@ public static class TuneEngine
 
     public static void Compress(float[] ear, int sampleRate)
     {
-        var footAttack = 1f - MathF.Exp(-1f / (sampleRate * 0.008f));
-        var footRelease = 1f - MathF.Exp(-1f / (sampleRate * 0.100f));
-        var gunAttack = 1f - MathF.Exp(-1f / (sampleRate * 0.003f));
-        var gunRelease = 1f - MathF.Exp(-1f / (sampleRate * 0.045f));
-        var body = Bandpass.Open(1400f, 0.6f, sampleRate);
+        var rate = Rate(sampleRate);
+        var footAttack = 1f - MathF.Exp(-1f / (rate * 0.008f));
+        var footRelease = 1f - MathF.Exp(-1f / (rate * 0.100f));
+        var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
+        var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.045f));
+        var gun = Bandpass.Open(1400f, 0.6f, rate);
+        var foot = Bandpass.Open(180f, 1.0f, rate);
         var footEnv = 0f;
         var gunEnv = 0f;
         const float ceiling = 0.8912509f;
         for (var i = 0; i < ear.Length; i++)
         {
-            var gunBand = body.Tick(ear[i]);
-            var rest = ear[i] - gunBand;
-            var restLevel = MathF.Abs(rest);
+            var gunBand = gun.Tick(ear[i]);
+            var footBand = foot.Tick(ear[i]);
+            var other = ear[i] - gunBand - footBand;
+            var footLevel = MathF.Abs(footBand);
             var gunLevel = MathF.Abs(gunBand);
-            footEnv += (restLevel - footEnv) * (restLevel > footEnv ? footAttack : footRelease);
+            footEnv += (footLevel - footEnv) * (footLevel > footEnv ? footAttack : footRelease);
             gunEnv += (gunLevel - gunEnv) * (gunLevel > gunEnv ? gunAttack : gunRelease);
-            var footGain = MathF.Pow(10f, (-Reduction(footEnv, -20f, 0.5f) + 4f) / 20f);
+            var footGain = MathF.Pow(10f, (-Reduction(footEnv, -20f, 0.5f) + 6f) / 20f);
             var gunGain = MathF.Pow(10f, -Reduction(gunEnv, -16f, 2f / 3f) / 20f);
-            var y = rest * footGain + gunBand * gunGain;
+            var y = other + footBand * footGain + gunBand * gunGain;
             var mag = MathF.Abs(y);
             if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
             ear[i] = y;
         }
     }
+
+    static int Rate(int sampleRate) => sampleRate >= 1000 ? sampleRate : 48000;
 
     static float Reduction(float env, float threshold, float slope)
     {
