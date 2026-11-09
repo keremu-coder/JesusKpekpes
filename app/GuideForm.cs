@@ -44,7 +44,7 @@ sealed class GuideForm : Form
         _title.Text = "Jesus Kpekpes";
         _step.SetBounds(28, 68, 400, 24);
         _step.ForeColor = Color.FromArgb(139, 124, 255);
-        _body.SetBounds(28, 108, 404, 80);
+        _body.SetBounds(28, 108, 404, 90);
         _body.ForeColor = Color.FromArgb(180, 184, 198);
         _list.SetBounds(28, 210, 404, 220);
         _list.BackColor = Color.FromArgb(18, 20, 28);
@@ -61,7 +61,7 @@ sealed class GuideForm : Form
         _windows.Visible = false;
 
         _loudLabel.SetBounds(28, 200, 404, 22);
-        _loudLabel.Text = "Footstep loudness";
+        _loudLabel.Text = "Footstep hit";
         _loud.SetBounds(28, 224, 404, 40);
         _roomLabel.SetBounds(28, 276, 404, 22);
         _roomLabel.Text = "Surround quiet";
@@ -122,22 +122,15 @@ sealed class GuideForm : Form
         else
         {
             _step.Text = "Step 3 of 3";
-            var game = GameDevice();
             if (Selected is null)
             {
                 _body.Text = "Go back and choose the headphones.";
                 _next.Enabled = false;
             }
-            else if (game is null)
-            {
-                _body.Text = "Jesus Kpekpes is not in the playback list yet. The sliders are ready. Turn on starts when that device is there.";
-                _next.Text = "Turn on";
-                _next.Enabled = false;
-            }
             else
             {
-                _body.Text = $"The game uses {Engine.DeviceName}. You hear it in {Selected.Name}.";
-                _next.Text = _live is null ? "Turn on" : "Turn off";
+                _body.Text = $"The game stays on {Selected.Name}. Secure Boot stays on.";
+                _next.Text = _on ? "Turn off" : "Turn on";
                 _next.Enabled = true;
             }
         }
@@ -151,40 +144,40 @@ sealed class GuideForm : Form
             ShowPage(_page + 1);
             return;
         }
-        if (GameDevice() is null || Selected is null) return;
-        if (_live is null) TurnOn();
+        if (Selected is null) return;
+        if (!_on) TurnOn();
         else TurnOff();
     }
 
-    AudioDevice? GameDevice() =>
-        _devices.FirstOrDefault(d => d.Name.Contains(Engine.DeviceName, StringComparison.OrdinalIgnoreCase) && d.Id != Selected?.Id);
+    bool _on;
 
     void ApplyMix()
     {
-        _loudLabel.Text = "Footstep loudness  " + _loud.Value;
+        _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
         _live?.SetMix(_loud.Value / 100f, _room.Value / 100f);
+        if (_on && Selected is not null) InPlace.Apply(Selected.Name, _loud.Value, _room.Value);
     }
 
     void TurnOn()
     {
         var phones = Selected;
-        var game = GameDevice();
-        if (phones is null || game is null) return;
-        _live?.Dispose();
-        _live = new Live(game.Id, phones.Id);
-        _live.Start();
-        ApplyMix();
-        Remember(phones.Id, true);
+        if (phones is null) return;
+        _on = InPlace.Apply(phones.Name, _loud.Value, _room.Value);
+        Remember(phones.Id, _on);
         if (_windows.Checked) Startup.Enable();
         else Startup.Disable();
-        _next.Text = "Turn off";
-        _body.Text = $"On. Set the game to {Engine.DeviceName}. You hear it in {phones.Name}. You can close this window.";
-        _tray.Visible = true;
+        _next.Text = _on ? "Turn off" : "Turn on";
+        _body.Text = _on
+            ? $"On. Leave the game on {phones.Name}. You can close this window."
+            : "Equalizer APO is not installed. The game stays on these headphones. Secure Boot stays on.";
+        _tray.Visible = _on;
     }
 
     void TurnOff()
     {
+        InPlace.Clear();
+        _on = false;
         _live?.Dispose();
         _live = null;
         _tray.Visible = false;
@@ -199,13 +192,10 @@ sealed class GuideForm : Form
         var phones = _devices.FirstOrDefault(d => d.Id == saved.Headphones);
         if (phones is null) return;
         _list.SelectedItem = phones;
-        var game = GameDevice();
-        if (game is null) return;
-        _live = new Live(game.Id, phones.Id);
-        _live.Start();
-        ApplyMix();
+        _on = InPlace.Apply(phones.Name, _loud.Value, _room.Value);
+        if (!_on) return;
         ShowPage(2);
-        _body.Text = $"On. The game uses {Engine.DeviceName}. You hear it in {phones.Name}.";
+        _body.Text = $"On. The game stays on {phones.Name}.";
         WindowState = FormWindowState.Minimized;
     }
 
@@ -255,7 +245,7 @@ sealed class GuideForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (_live is not null && !_exit)
+        if ((_live is not null || _on) && !_exit)
         {
             e.Cancel = true;
             Hide();
