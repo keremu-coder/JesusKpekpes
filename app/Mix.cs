@@ -6,7 +6,10 @@ enum Preset { Drop, Well }
 
 enum Route { Stereo, Surround }
 
-sealed record MixPlan(Preset Preset, Route Route, int Hit, int Quiet, string Device);
+/// <summary>How much headroom the preamp keeps. Safe never clips. Balanced and Loud trade headroom for a louder result and can distort on very loud shots.</summary>
+enum Level { Safe, Balanced, Loud }
+
+sealed record MixPlan(Preset Preset, Route Route, int Hit, int Quiet, string Device, Level Level = Level.Safe);
 
 static class Mix
 {
@@ -16,7 +19,7 @@ static class Mix
     {
         var n = CultureInfo.InvariantCulture;
         var filters = Filters(plan);
-        var preamp = PreampDb(filters, plan.Route);
+        var preamp = PreampDb(filters, plan.Route, plan.Level);
         var text = new System.Text.StringBuilder();
         text.Append("Device: ").Append(DeviceName(plan.Device)).Append("\r\n");
         if (plan.Route == Route.Surround)
@@ -68,7 +71,7 @@ static class Mix
     public static void Process(MixPlan plan, float[] left, float[] right, float[]? sideLeft = null, float[]? sideRight = null)
     {
         var filters = Filters(plan);
-        var preamp = MathF.Pow(10, PreampDb(filters, plan.Route) / 20f);
+        var preamp = MathF.Pow(10, PreampDb(filters, plan.Route, plan.Level) / 20f);
         var sr = 48000;
         if (plan.Route == Route.Stereo)
         {
@@ -109,11 +112,15 @@ static class Mix
         }
     }
 
-    public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route);
+    public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route, plan.Level);
 
-    static float PreampDb(Band[] filters, Route route)
+    static float PreampDb(Band[] filters, Route route, Level level)
     {
-        var worst = 0f;
+        // Game sound has far less energy up high than down low, so a boost up high needs less headroom than the raw peak says.
+        // Balanced assumes the content falls 3 dB per octave above 200 Hz, Loud 6 dB. Each is capped so it can never be wildly off.
+        var tilt = level switch { Level.Balanced => 3f, Level.Loud => 6f, _ => 0f };
+        var cap = level switch { Level.Balanced => 4f, Level.Loud => 8f, _ => 0f };
+        float worst = 0, weighted = 0;
         for (var hz = 40f; hz <= 16000f; hz *= 1.06f)
         {
             var db = 0f;
@@ -121,8 +128,12 @@ static class Mix
                 db += ResponseDb(band, hz);
             if (route == Route.Surround) db += 6.8f;
             if (db > worst) worst = db;
+            var w = db - (hz > 200f ? tilt * MathF.Log2(hz / 200f) : 0f);
+            if (w > weighted) weighted = w;
         }
-        return worst <= 0.05f ? 0 : -(worst + 0.5f);
+        var safe = worst <= 0.05f ? 0f : -(worst + 0.5f);
+        var eased = weighted <= 0.05f ? 0f : -(weighted + 0.5f);
+        return MathF.Min(0f, MathF.Min(safe + cap, MathF.Max(eased, safe)));
     }
 
     static Band[] Filters(MixPlan plan)
@@ -156,6 +167,8 @@ static class Mix
             new("L R", Shelf.None, 280, hit * 2f, 0.8f),
             new("L R", Shelf.None, 3400, hit * 6f, 1.2f),
             new("L R", Shelf.None, 4800, hit * 2f, 1.6f),
+            new("L R", Shelf.None, 2000, -(quiet * 2f), 1f),
+            new("L R", Shelf.None, 6500, hit * 2f, 1.4f),
         ];
     }
 

@@ -18,6 +18,7 @@ sealed class GuideForm : Form
     readonly Label _loudLabel = new();
     readonly Label _roomLabel = new();
     readonly ComboBox _preset = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly ComboBox _level = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     readonly CheckBox _keep = new() { Text = "Keep my other audio setup", Checked = true };
     readonly System.Windows.Forms.Timer _save = new() { Interval = 400 };
     readonly NotifyIcon _tray = new();
@@ -76,6 +77,11 @@ sealed class GuideForm : Form
         _seven.Text = "7.1";
         _seven.SetBounds(230, 348, 160, 28);
         _keep.SetBounds(28, 400, 404, 28);
+        _level.Items.AddRange(new object[] { "Safe (never clips)", "Balanced (louder)", "Loud (may distort)" });
+        _level.SelectedIndex = 0;
+        _level.SetBounds(28, 440, 260, 32);
+        _level.Visible = false;
+        _level.SelectedIndexChanged += (_, _) => ScheduleSave();
         _preset.Visible = false;
         _seven.Visible = false;
         _keep.Visible = false;
@@ -88,7 +94,7 @@ sealed class GuideForm : Form
         _back.Click += (_, _) => ShowPage(_page - 1);
         _next.Click += (_, _) => OnNext();
 
-        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _keep, _back, _next]);
+        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _level, _keep, _back, _next]);
         _tray.Icon = SystemIcons.Application;
         _tray.Text = "Jesus Kpekpes";
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
@@ -126,6 +132,7 @@ sealed class GuideForm : Form
         _preset.Visible = mix;
         _seven.Visible = mix;
         _keep.Visible = mix;
+        _level.Visible = mix;
         _seven.Enabled = Selected is { Channels: >= 8 };
         if (!_seven.Enabled && _seven.Checked) _seven.Checked = false;
         StopPreview();
@@ -198,7 +205,8 @@ sealed class GuideForm : Form
         _seven.Checked ? Route.Surround : Route.Stereo,
         _loud.Value,
         _room.Value,
-        name);
+        name,
+        (Level)Math.Clamp(_level.SelectedIndex, 0, 2));
 
     void TurnOn()
     {
@@ -352,6 +360,7 @@ sealed class GuideForm : Form
             "quiet=" + _room.Value,
             "preset=" + (_preset.SelectedIndex == 1 ? "well" : "drop"),
             "route=" + (_seven.Checked ? "surround" : "stereo"),
+            "level=" + Math.Clamp(_level.SelectedIndex, 0, 2),
         ]);
     }
 
@@ -369,6 +378,7 @@ sealed class GuideForm : Form
         if (map.TryGetValue("quiet", out var quiet) && int.TryParse(quiet, out var quietValue)) _room.Value = Math.Clamp(quietValue, 0, 100);
         if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "well" ? 1 : 0;
         if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
+        if (map.TryGetValue("level", out var level) && int.TryParse(level, out var levelValue)) _level.SelectedIndex = Math.Clamp(levelValue, 0, 2);
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
         return (headphones, on == "1");
