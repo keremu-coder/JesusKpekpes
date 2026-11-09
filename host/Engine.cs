@@ -15,6 +15,7 @@ public sealed class Engine
     readonly float[] _bandSlow;
     readonly float[] _fullFast;
     readonly float[] _fullSlow;
+    readonly float[] _sample = new float[8];
     readonly float[] _drop = new float[4];
     readonly float[] _hit = new float[4];
     readonly float _fastCoef;
@@ -77,33 +78,31 @@ public sealed class Engine
         var n = input[0].Length;
         for (var i = 0; i < n; i++)
         {
-            Span<float> ch = stackalloc float[8];
             for (var c = 0; c < 8; c++)
             {
                 var x = c < input.Length ? input[c][i] : 0;
                 foreach (var filter in _correction[c]) x = filter.Tick(x);
-                ch[c] = x;
+                _sample[c] = x;
             }
 
-            ch[C] *= 0.35f;
-            var frontPeak = MathF.Max(MathF.Abs(ch[L]), MathF.Abs(ch[R]));
+            var frontPeak = MathF.Max(MathF.Abs(_sample[L]), MathF.Abs(_sample[R]));
             var frontCoef = frontPeak > _frontEnv ? _frontAttack : _frontRelease;
             _frontEnv += (frontPeak - _frontEnv) * frontCoef;
-            var hold = _frontEnv > 0.18f ? 0.28f : 1f;
+            var hold = _frontEnv > 0.18f ? 0.5f : 1f;
             _frontGain += (hold - _frontGain) * _frontAttack;
-            ch[L] *= _frontGain;
-            ch[R] *= _frontGain;
+            _sample[L] *= _frontGain;
+            _sample[R] *= _frontGain;
 
             for (var s = 0; s < Surround.Length; s++)
             {
                 var c = Surround[s];
-                var full = MathF.Abs(ch[c]);
+                var full = MathF.Abs(_sample[c]);
                 _fullFast[s] += (full - _fullFast[s]) * _fastCoef;
                 _fullSlow[s] += (full - _fullSlow[s]) * _fullSlowCoef;
-                if (_fullFast[s] < _fullSlow[s] * 1.25f) ch[c] *= 1f - SurroundQuiet * 0.78f;
-                var body = _body[s].Tick(ch[c]);
-                var band = _step[s].Tick(ch[c]);
-                var splash = _splash[s].Tick(ch[c]);
+                if (_fullFast[s] < _fullSlow[s] * 1.25f) _sample[c] *= 1f - SurroundQuiet * 0.78f;
+                var body = _body[s].Tick(_sample[c]);
+                var band = _step[s].Tick(_sample[c]);
+                var splash = _splash[s].Tick(_sample[c]);
                 var mag = MathF.Abs(band);
                 _bandFast[s] += (mag - _bandFast[s]) * _fastCoef;
                 _bandSlow[s] += (mag - _bandSlow[s]) * _bandSlowCoef;
@@ -112,13 +111,21 @@ public sealed class Engine
                 if (lift > _hit[s] && lift > 0.35f) _drop[s] = body * 1.4f + splash * 0.6f;
                 _drop[s] *= _dropDecay;
                 _hit[s] = lift;
-                ch[c] += (body * 1.3f + band * 1.1f + splash * 0.5f) * lift * Loudness * 3.2f;
-                ch[c] += _drop[s] * Loudness * 2.2f;
+                _sample[c] += (body * 1.3f + band * 1.1f + splash * 0.5f) * lift * Loudness * 3.2f;
+                _sample[c] += _drop[s] * Loudness * 2.2f;
             }
 
-            left[i] = Math.Clamp(0.72f * ch[L] + 0.2f * ch[C] + 1.15f * ch[Sl] + 0.8f * ch[Rl], -1, 1);
-            right[i] = Math.Clamp(0.72f * ch[R] + 0.2f * ch[C] + 1.15f * ch[Sr] + 0.8f * ch[Rr], -1, 1);
+            left[i] = Soft(0.72f * _sample[L] + 0.71f * _sample[C] + 1.15f * _sample[Sl] + 0.8f * _sample[Rl]);
+            right[i] = Soft(0.72f * _sample[R] + 0.71f * _sample[C] + 1.15f * _sample[Sr] + 0.8f * _sample[Rr]);
         }
+    }
+
+    static float Soft(float x)
+    {
+        var a = MathF.Abs(x);
+        if (a <= 0.8f) return x;
+        var shaped = 0.8f + 0.19f * MathF.Tanh((a - 0.8f) / 0.19f);
+        return MathF.CopySign(shaped, x);
     }
 
     static Biquad Peaking(float hz, float db, float q, float sampleRate)
