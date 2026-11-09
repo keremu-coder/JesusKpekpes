@@ -18,6 +18,7 @@ sealed class GuideForm : Form
     readonly Label _loudLabel = new();
     readonly Label _roomLabel = new();
     readonly ComboBox _preset = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    readonly CheckBox _keep = new() { Text = "Keep my other audio setup", Checked = true };
     readonly System.Windows.Forms.Timer _save = new() { Interval = 400 };
     readonly NotifyIcon _tray = new();
     int _page;
@@ -74,8 +75,10 @@ sealed class GuideForm : Form
         _preset.SetBounds(28, 352, 180, 32);
         _seven.Text = "7.1";
         _seven.SetBounds(230, 348, 160, 28);
+        _keep.SetBounds(28, 400, 404, 28);
         _preset.Visible = false;
         _seven.Visible = false;
+        _keep.Visible = false;
         _preset.SelectedIndexChanged += (_, _) => ScheduleSave();
         _seven.CheckedChanged += (_, _) => { RefreshRoute(); ScheduleSave(); };
         _save.Tick += (_, _) => { _save.Stop(); if (_on && Selected is not null) TurnOn(); };
@@ -85,7 +88,7 @@ sealed class GuideForm : Form
         _back.Click += (_, _) => ShowPage(_page - 1);
         _next.Click += (_, _) => OnNext();
 
-        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _back, _next]);
+        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _keep, _back, _next]);
         _tray.Icon = SystemIcons.Application;
         _tray.Text = "Jesus Kpekpes";
         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
@@ -111,6 +114,7 @@ sealed class GuideForm : Form
         _roomLabel.Visible = mix;
         _preset.Visible = mix;
         _seven.Visible = mix;
+        _keep.Visible = mix;
         _seven.Enabled = Selected is { Channels: >= 8 };
         if (!_seven.Enabled && _seven.Checked) _seven.Checked = false;
         StopPreview();
@@ -194,13 +198,16 @@ sealed class GuideForm : Form
             _seven.Checked = false;
             _body.Text = $"{phones.Name} is not 7.1. Stereo is on instead.";
         }
-        var result = InPlace.Apply(phones.Id, Current(phones.Name), _keepOthers);
+        var found = InPlace.Found();
+        var result = InPlace.Apply(phones.Id, Current(phones.Name), _keep.Checked || _keepOthers);
         _on = result is WriteResult.On or WriteResult.NotAttached;
         Remember(phones.Id, _on);
         _next.Text = _on ? "Turn off" : "Turn on";
         _body.Text = result switch
         {
+            WriteResult.On when found.Count > 0 => $"On. {string.Join(", ", found)} stays. Turn this off to use that instead.",
             WriteResult.On => $"On. Leave the game on {phones.Name}.",
+            WriteResult.NotAttached when found.Count > 0 => $"The file is written. {string.Join(", ", found)} stays. Equalizer APO is not turned on for these headphones yet.",
             WriteResult.NotAttached => "The file is written. Equalizer APO is not turned on for these headphones yet.",
             WriteResult.Conflict => "HeSuVi, Rara, or Peace is already there. Press Turn on again to keep that setup.",
             WriteResult.Denied => "Windows blocked the write. Press Yes if it asks.",
