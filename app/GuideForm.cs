@@ -77,7 +77,7 @@ sealed class GuideForm : Form
         _seven.Text = "7.1, untested";
         _seven.SetBounds(230, 348, 160, 28);
         _keep.SetBounds(28, 400, 404, 28);
-        _level.Items.AddRange(new object[] { "Safe (never clips)", "Balanced (louder)", "Loud (may distort)" });
+        _level.Items.AddRange(new object[] { "Safe (no extra boost)", "Balanced (louder)", "Loud (may distort)" });
         _level.SelectedIndex = 0;
         _level.SetBounds(28, 440, 260, 32);
         _level.Visible = false;
