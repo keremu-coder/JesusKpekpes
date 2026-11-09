@@ -6,67 +6,100 @@ on:
 jobs:
   probe:
     runs-on: windows-latest
+    timeout-minutes: 8
     steps:
       - name: Equalizer APO
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Continue'
-          $lines = @()
-          try {
-            $best = Invoke-RestMethod -Uri 'https://sourceforge.net/projects/equalizerapo/best_release.json' -UserAgent 'curl/8.0'
-            $win = $best.platform_releases.windows
-            $lines += "best windows file: $($win.filename)"
-            $lines += "url: $($win.url)"
-            $lines += "md5: $($win.md5sum)"
-            $lines += "date: $($win.date)"
-            $lines += "bytes: $($win.bytes)"
-            $dest = Join-Path $env:RUNNER_TEMP 'apo.exe'
-            Invoke-WebRequest -Uri $win.url -OutFile $dest -UserAgent 'curl/8.0' -MaximumRedirection 10
-            $lines += "downloaded bytes: $((Get-Item $dest).Length)"
-            $lines += "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
-            $sig = Get-AuthenticodeSignature $dest
-            $lines += "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
-            $proc = Start-Process -FilePath $dest -ArgumentList '/S' -Wait -PassThru
-            $lines += "silent install exit code: $($proc.ExitCode)"
-            $root = Join-Path ${env:ProgramFiles} 'EqualizerAPO'
-            $lines += "install folder exists: $(Test-Path $root)"
-            if (Test-Path $root) { $lines += "files: $((Get-ChildItem $root -Name) -join ', ')" }
+          $ErrorActionPreference = 'Stop'
+          function Say([string]$text) { Write-Host $text }
+          $best = Invoke-RestMethod -Uri 'https://sourceforge.net/projects/equalizerapo/best_release.json' -UserAgent 'curl/8.0' -TimeoutSec 60
+          $win = $best.platform_releases.windows
+          if (-not $win.filename) { throw 'best_release.json has no windows file' }
+          Say "file: $($win.filename)"
+          Say "advertised bytes: $($win.bytes)"
+          Say "advertised md5: $($win.md5sum)"
+          Say "date: $($win.date)"
+          $stable = 'https://sourceforge.net/projects/equalizerapo/files' + $win.filename + '/download'
+          Say "stable url: $stable"
+          $dest = Join-Path $env:RUNNER_TEMP 'apo.exe'
+          Invoke-WebRequest -Uri $stable -OutFile $dest -UserAgent 'curl/8.0' -MaximumRedirection 10 -TimeoutSec 180
+          $size = (Get-Item $dest).Length
+          $head = [System.IO.File]::ReadAllBytes($dest)[0..1]
+          $pe = ($head[0] -eq 0x4D -and $head[1] -eq 0x5A)
+          Say "downloaded bytes: $size"
+          Say "pe header: $pe"
+          if (-not $pe) { throw 'download is not a Windows executable' }
+          if ([int64]$win.bytes -ne $size) { throw "size $($size) does not match advertised $($win.bytes)" }
+          $md5 = (Get-FileHash $dest -Algorithm MD5).Hash.ToLower()
+          Say "md5: $md5 match: $($md5 -eq ([string]$win.md5sum).ToLower())"
+          if ($md5 -ne ([string]$win.md5sum).ToLower()) { throw 'md5 does not match best_release.json' }
+          Say "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
+          $sig = Get-AuthenticodeSignature $dest
+          Say "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
+          $proc = Start-Process -FilePath $dest -ArgumentList '/S' -PassThru
+          if (-not $proc.WaitForExit(45000)) {
+            Say 'setup still open after 45s because DeviceSelector waits for a click; stopping it'
+            Get-Process -Name 'DeviceSelector' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Say 'setup process already closed' }
+            Start-Sleep -Seconds 1
+          } else {
+            Say "silent install exit code: $($proc.ExitCode)"
+          }
+          $root = Join-Path $env:ProgramFiles 'EqualizerAPO'
+          Say "install folder exists: $(Test-Path $root)"
+          if (Test-Path $root) {
+            Say "files: $((Get-ChildItem $root -Name) -join ', ')"
             $cfg = Join-Path $root 'config'
-            if (Test-Path $cfg) { $lines += "config files: $((Get-ChildItem $cfg -Name) -join ', ')" }
-            $conf = Join-Path $root 'Configurator.exe'
-            $lines += "configurator exists: $(Test-Path $conf)"
-          } catch { $lines += "ERROR: $($_.Exception.Message)" }
-          Write-Host ($lines -join "`n")
-          $msg = ($lines -join '%0A')
-          Write-Host "::notice title=apo::$msg"
+            if (Test-Path $cfg) { Say "config files: $((Get-ChildItem $cfg -Name) -join ', ')" }
+            Say "configurator exists: $(Test-Path (Join-Path $root 'Configurator.exe'))"
+          }
       - name: ReaPlugs
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Continue'
-          $lines = @()
-          try {
-            $page = Invoke-WebRequest -Uri 'https://www.reaper.fm/reaplugs/' -UserAgent 'curl/8.0'
-            $links = $page.Links | Where-Object { $_.href -match 'reaplugs' } | ForEach-Object { $_.href }
-            $lines += "links: $($links -join ' | ')"
-            $pick = $links | Where-Object { $_ -match 'x64' -and $_ -match '\.exe$' } | Select-Object -First 1
-            $lines += "picked: $pick"
-            if ($pick) {
-              $url = if ($pick -match '^https?:') { $pick } else { 'https://www.reaper.fm/reaplugs/' + $pick.TrimStart('/') }
-              $dest = Join-Path $env:RUNNER_TEMP 'reaplugs.exe'
-              Invoke-WebRequest -Uri $url -OutFile $dest -UserAgent 'curl/8.0'
-              $lines += "url: $url"
-              $lines += "downloaded bytes: $((Get-Item $dest).Length)"
-              $lines += "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
-              $sig = Get-AuthenticodeSignature $dest
-              $lines += "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
-              $proc = Start-Process -FilePath $dest -ArgumentList '/S' -Wait -PassThru
-              $lines += "silent install exit code: $($proc.ExitCode)"
-              $found = Get-ChildItem -Path 'C:\Program Files','C:\Program Files (x86)' -Recurse -Filter 'reacomp*.dll' -ErrorAction SilentlyContinue | Select-Object -First 4 -ExpandProperty FullName
-              $lines += "reacomp: $($found -join ' | ')"
-              $x = Get-ChildItem -Path 'C:\Program Files','C:\Program Files (x86)' -Recurse -Filter 'reaxcomp*.dll' -ErrorAction SilentlyContinue | Select-Object -First 4 -ExpandProperty FullName
-              $lines += "reaxcomp: $($x -join ' | ')"
-            }
-          } catch { $lines += "ERROR: $($_.Exception.Message)" }
-          Write-Host ($lines -join "`n")
-          $msg = ($lines -join '%0A')
-          Write-Host "::notice title=reaplugs::$msg"
+          $ErrorActionPreference = 'Stop'
+          function Say([string]$text) { Write-Host $text }
+          function Join-Vendor([string]$href) {
+            if ($href -match '^https?://') { return $href }
+            if ($href.StartsWith('/')) { return 'https://www.reaper.fm' + $href }
+            return 'https://www.reaper.fm/reaplugs/' + $href
+          }
+          $page = Invoke-WebRequest -Uri 'https://www.reaper.fm/reaplugs/' -UserAgent 'curl/8.0' -TimeoutSec 60
+          $links = @($page.Links | Where-Object { $_.href -match 'reaplugs' } | ForEach-Object { $_.href })
+          Say "links: $($links -join ' | ')"
+          $pick = $links | Where-Object { $_ -match 'x64' -and $_ -match '\.exe($|\?)' } | Select-Object -First 1
+          Say "picked: $pick"
+          if (-not $pick) { throw 'no x64 ReaPlugs installer link on the official page' }
+          $url = Join-Vendor $pick
+          Say "url: $url"
+          $dest = Join-Path $env:RUNNER_TEMP 'reaplugs.exe'
+          Invoke-WebRequest -Uri $url -OutFile $dest -UserAgent 'curl/8.0' -MaximumRedirection 10 -TimeoutSec 180
+          $size = (Get-Item $dest).Length
+          $head = [System.IO.File]::ReadAllBytes($dest)[0..1]
+          $pe = ($head[0] -eq 0x4D -and $head[1] -eq 0x5A)
+          Say "downloaded bytes: $size"
+          Say "pe header: $pe"
+          if (-not $pe) { throw 'download is not a Windows executable' }
+          Say "sha256: $((Get-FileHash $dest -Algorithm SHA256).Hash)"
+          $sig = Get-AuthenticodeSignature $dest
+          Say "signature: $($sig.Status) signer: $($sig.SignerCertificate.Subject)"
+          $proc = Start-Process -FilePath $dest -ArgumentList '/S' -PassThru
+          if (-not $proc.WaitForExit(45000)) {
+            Say 'ReaPlugs setup still open after 45s; stopping it'
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Say 'setup process already closed' }
+          } else {
+            Say "silent install exit code: $($proc.ExitCode)"
+          }
+          $places = @(
+            'C:\Program Files\VSTPlugins',
+            'C:\Program Files\ReaPlugs',
+            'C:\Program Files (x86)\VSTPlugins',
+            'C:\Program Files (x86)\ReaPlugs'
+          )
+          foreach ($place in $places) {
+            if (-not (Test-Path $place)) { continue }
+            $names = Get-ChildItem $place -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match 'reacomp|reaxcomp' } |
+              Select-Object -ExpandProperty Name
+            Say "found in ${place}: $($names -join ', ')"
+          }
