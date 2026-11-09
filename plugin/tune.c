@@ -1,7 +1,8 @@
 /* Build on Windows, from this folder:
    x86_64-w64-mingw32-gcc -shared -O2 -o JesusKpekpesTune.dll tune.c -lm
-   The text file is the equalizer. This plugin raises only the foot band.
-   A gun is turned down in its own band, on the ear that fired. The other ear is never touched. */
+   The text file is the equalizer. This plugin is the leveler after it.
+   A quiet foot is raised. Only the gun's band is turned down, and only on the ear that fired.
+   The other ear is never touched. There is no lookahead, so there is no added delay. */
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -68,7 +69,7 @@ typedef struct {
 } Stage;
 
 typedef struct {
-    Stage gun, foot;
+    Stage body;
     float foot_env, gun_env;
     float foot_attack, foot_release, gun_attack, gun_release;
 } Lane;
@@ -78,32 +79,17 @@ typedef struct {
     float rate;
 } Bank;
 
-static void set_band(Stage* stage, float hz, float q, float rate) {
-    float w = 2.f * 3.14159265f * hz / rate;
-    float c = cosf(w);
-    float alpha = sinf(w) / (2.f * q);
-    float a0 = 1.f + alpha;
-    stage->b0 = alpha / a0;
-    stage->b2 = -alpha / a0;
-    stage->a1 = -2.f * c / a0;
-    stage->a2 = (1.f - alpha) / a0;
-    stage->x1 = stage->x2 = stage->y1 = stage->y2 = 0.f;
-}
-
-static float tick(Stage* stage, float x) {
-    float y = stage->b0 * x + stage->b2 * stage->x2 - stage->a1 * stage->y1 - stage->a2 * stage->y2;
-    stage->x2 = stage->x1;
-    stage->x1 = x;
-    stage->y2 = stage->y1;
-    stage->y1 = y;
-    return y;
-}
-
 static void arm(Lane* lane, float rate) {
-    if (rate < 1000.f) rate = 48000.f;
+    float w, c, alpha, a0;
     memset(lane, 0, sizeof *lane);
-    set_band(&lane->gun, 1400.f, 0.6f, rate);
-    set_band(&lane->foot, 180.f, 1.0f, rate);
+    w = 2.f * 3.14159265f * 1400.f / rate;
+    c = cosf(w);
+    alpha = sinf(w) / (2.f * 0.6f);
+    a0 = 1.f + alpha;
+    lane->body.b0 = alpha / a0;
+    lane->body.b2 = -alpha / a0;
+    lane->body.a1 = -2.f * c / a0;
+    lane->body.a2 = (1.f - alpha) / a0;
     lane->foot_attack = 1.f - expf(-1.f / (rate * 0.008f));
     lane->foot_release = 1.f - expf(-1.f / (rate * 0.100f));
     lane->gun_attack = 1.f - expf(-1.f / (rate * 0.003f));
@@ -122,17 +108,21 @@ static float reduction(float env, float threshold, float slope) {
 }
 
 static float shape(Lane* lane, float x) {
-    float gun_band = tick(&lane->gun, x);
-    float foot_band = tick(&lane->foot, x);
-    float other = x - gun_band - foot_band;
-    float foot_level = fabsf(foot_band);
-    float gun_level = fabsf(gun_band);
-    float foot_gain, gun_gain, y, mag;
-    lane->foot_env += (foot_level - lane->foot_env) * (foot_level > lane->foot_env ? lane->foot_attack : lane->foot_release);
+    Stage* body = &lane->body;
+    float gun_band = body->b0 * x + body->b2 * body->x2 - body->a1 * body->y1 - body->a2 * body->y2;
+    float rest, rest_level, gun_level, foot_gain, gun_gain, y, mag;
+    body->x2 = body->x1;
+    body->x1 = x;
+    body->y2 = body->y1;
+    body->y1 = gun_band;
+    rest = x - gun_band;
+    rest_level = fabsf(rest);
+    gun_level = fabsf(gun_band);
+    lane->foot_env += (rest_level - lane->foot_env) * (rest_level > lane->foot_env ? lane->foot_attack : lane->foot_release);
     lane->gun_env += (gun_level - lane->gun_env) * (gun_level > lane->gun_env ? lane->gun_attack : lane->gun_release);
-    foot_gain = powf(10.f, (-reduction(lane->foot_env, -20.f, 0.5f) + 6.f) / 20.f);
+    foot_gain = powf(10.f, (-reduction(lane->foot_env, -20.f, 0.5f) + 4.f) / 20.f);
     gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
-    y = other + foot_band * foot_gain + gun_band * gun_gain;
+    y = rest * foot_gain + gun_band * gun_gain;
     mag = fabsf(y);
     if (mag <= 0.8912509f) return y;
     return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);

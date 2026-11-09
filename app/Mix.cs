@@ -99,10 +99,10 @@ static class Mix
         return false;
     }
 
-    public static void Process(MixPlan plan, float[] left, float[] right, float[]? sideLeft = null, float[]? sideRight = null, float[]? center = null, float[]? rearLeft = null, float[]? rearRight = null, int sampleRate = 48000)
+    public static void Process(MixPlan plan, float[] left, float[] right, float[]? sideLeft = null, float[]? sideRight = null, float[]? center = null, float[]? rearLeft = null, float[]? rearRight = null)
     {
         var filters = Filters(plan);
-        var sr = sampleRate >= 1000 ? sampleRate : 48000;
+        var sr = 48000;
         if (plan.Route == Route.Stereo)
         {
             var chainL = Chain(filters, sr);
