@@ -18,8 +18,10 @@ static class InPlace
         {
             var folder = Path.Combine(root, FolderName);
             Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(folder, "on.txt"), Mix.Config(plan));
-            File.WriteAllText(Path.Combine(folder, "switch.txt"), Mix.Switch(true, folder));
+            var onFile = Path.Combine(folder, "on.txt");
+            var plugin = OwnPlugin(folder);
+            Replace(onFile, Mix.Config(plan, plugin));
+            Replace(Path.Combine(folder, "switch.txt"), Mix.Switch(true, onFile));
             EnsureInclude(root);
             return Attached(deviceId) ? WriteResult.On : WriteResult.NotAttached;
         }
@@ -47,7 +49,7 @@ static class InPlace
         {
             var folder = Path.Combine(root, FolderName);
             Directory.CreateDirectory(folder);
-            File.WriteAllText(Path.Combine(folder, "switch.txt"), Mix.Switch(false));
+            Replace(Path.Combine(folder, "switch.txt"), Mix.Switch(false));
             return true;
         }
         catch (UnauthorizedAccessException) { return false; }
@@ -67,7 +69,8 @@ static class InPlace
             if (!File.Exists(main)) return true;
             var lines = File.ReadAllLines(main);
             var kept = lines.Where(l => !l.Contains(FolderName, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (kept.Length != lines.Length) File.WriteAllLines(main, kept);
+            if (kept.Length != lines.Length)
+                Replace(main, kept.Length == 0 ? "" : string.Join("\r\n", kept) + "\r\n");
             return true;
         }
         catch (UnauthorizedAccessException) { return false; }
@@ -93,7 +96,50 @@ static class InPlace
         if (current.Contains(FolderName, StringComparison.OrdinalIgnoreCase)) return;
         var backup = main + ".jesus-kpekpes.bak";
         if (File.Exists(main) && !File.Exists(backup)) File.Copy(main, backup);
-        File.AppendAllText(main, (current.Length == 0 ? "" : "\r\n") + Mix.IncludeLine + "\r\n");
+        var body = current.TrimEnd();
+        Replace(main, (body.Length == 0 ? "" : body + "\r\n") + Mix.IncludeLine + "\r\n");
+    }
+
+    static string? OwnPlugin(string folder)
+    {
+        var source = Path.Combine(AppContext.BaseDirectory, "JesusKpekpesTune.dll");
+        if (!File.Exists(source)) return null;
+        var dest = Path.Combine(folder, "JesusKpekpesTune.dll");
+        try
+        {
+            var tmp = dest + ".jesuskpekpes_tmp";
+            File.Copy(source, tmp, true);
+            File.Move(tmp, dest, true);
+            return dest;
+        }
+        catch (IOException)
+        {
+            return File.Exists(dest) ? dest : null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return File.Exists(dest) ? dest : null;
+        }
+    }
+
+    static void Replace(string path, string text)
+    {
+        var tmp = path + ".jesuskpekpes_tmp";
+        try
+        {
+            File.WriteAllText(tmp, text);
+            File.Move(tmp, path, true);
+        }
+        catch
+        {
+            try
+            {
+                if (File.Exists(tmp)) File.Delete(tmp);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            throw;
+        }
     }
 
     static string ReadOthers(string root)
