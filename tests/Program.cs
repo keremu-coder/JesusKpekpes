@@ -69,4 +69,34 @@ var quietGain = Energy(quietOut, sr - 4000, 4000) / Energy(quiet[Engine.L], sr -
 var loudGain = Energy(loudOut, sr - 4000, 4000) / Energy(loud[Engine.L], sr - 4000, 4000);
 Check(quietGain > loudGain, $"quiet gain {quietGain} should be above loud gain {loudGain}");
 
+var drop = new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "Headphones");
+var well = new MixPlan(Preset.Well, Route.Stereo, 100, 100, "Headphones");
+var text = Mix.Config(drop);
+Check(text.Contains("Channel: L R"), "stereo config must filter left and right");
+Check(!text.Contains("SL SR"), "stereo config must not depend on surround speakers");
+var last = text.Split("Channel: ").Last();
+Check(last.StartsWith("all"), "config must reset the channel at the end");
+Check(text.Contains('.') && !text.Contains(",0 dB"), "gains must use a decimal point");
+Check(Mix.PreampDb(well) <= -6f, $"preamp {Mix.PreampDb(well)} must cover the step boost");
+Check(Mix.Config(new MixPlan(Preset.Drop, Route.Surround, 100, 100, "Headphones")).Contains("Copy:"), "7.1 must fold into left and right");
+Check(Mix.Switch(false) == "", "off must not include the filter file");
+Check(Mix.Conflicts("Include: HeSuVi").Contains("HeSuVi"), "HeSuVi should be noticed");
+Check(Mix.Conflicts("RaraSuppression").Contains("Rara"), "Rara should be noticed");
+
+var tone = new float[sr];
+var low = new float[sr];
+for (var i = 0; i < sr; i++)
+{
+    tone[i] = MathF.Sin(2 * MathF.PI * 3400 * i / sr);
+    low[i] = MathF.Sin(2 * MathF.PI * 100 * i / sr);
+}
+var toneR = (float[])tone.Clone();
+var lowR = (float[])low.Clone();
+Mix.Process(well, tone, toneR);
+Mix.Process(well, low, lowR);
+var stepBand = Energy(tone, sr - 4000, 4000);
+var roomBand = Energy(low, sr - 4000, 4000);
+Check(stepBand > roomBand * 2, $"step band {stepBand} should sit well above the room {roomBand}");
+Check(stepBand <= 1.05f, $"step band clipped at {stepBand}");
+
 Console.WriteLine("engine ok");

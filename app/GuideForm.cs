@@ -77,7 +77,7 @@ sealed class GuideForm : Form
         _preset.Visible = false;
         _seven.Visible = false;
         _preset.SelectedIndexChanged += (_, _) => ScheduleSave();
-        _seven.CheckedChanged += (_, _) => ScheduleSave();
+        _seven.CheckedChanged += (_, _) => { RefreshRoute(); ScheduleSave(); };
         _save.Tick += (_, _) => { _save.Stop(); if (_on && Selected is not null) TurnOn(); };
 
         Style(_back, "Back", 28, 492, 120);
@@ -112,6 +112,7 @@ sealed class GuideForm : Form
         _preset.Visible = mix;
         _seven.Visible = mix;
         _seven.Enabled = Selected is { Channels: >= 8 };
+        if (!_seven.Enabled && _seven.Checked) _seven.Checked = false;
         StopPreview();
         if (_page == 0)
         {
@@ -138,9 +139,7 @@ sealed class GuideForm : Form
             }
             else
             {
-                _body.Text = _seven.Checked
-                    ? $"7.1 on {Selected.Name}. The game must actually be set to 7.1."
-                    : $"Stereo on {Selected.Name}. The game can stay at 2 channels.";
+                RefreshRoute();
                 _next.Text = _on ? "Turn off" : "Turn on";
                 _next.Enabled = true;
             }
@@ -161,6 +160,14 @@ sealed class GuideForm : Form
     }
 
     bool _on;
+
+    void RefreshRoute()
+    {
+        if (_page != 2 || Selected is null) return;
+        _body.Text = _seven.Checked
+            ? $"7.1 on {Selected.Name}. The game must actually be set to 7.1."
+            : $"Stereo on {Selected.Name}. The game can stay at 2 channels.";
+    }
 
     void ScheduleSave()
     {
@@ -222,6 +229,7 @@ sealed class GuideForm : Form
         var phones = _devices.FirstOrDefault(d => d.Id == saved.Headphones);
         if (phones is null) return;
         _list.SelectedItem = phones;
+        if (phones.Channels < 8) _seven.Checked = false;
         _on = InPlace.Apply(phones.Id, Current(phones.Name), true) is WriteResult.On or WriteResult.NotAttached;
         if (!_on) return;
         ShowPage(2);
@@ -251,14 +259,15 @@ sealed class GuideForm : Form
         var interleaved = new byte[n * 8];
         for (var i = 0; i < n; i++)
         {
-            BitConverter.TryWriteBytes(interleaved.AsSpan(i * 8, 4), left[i] * 0.4f);
-            BitConverter.TryWriteBytes(interleaved.AsSpan(i * 8 + 4, 4), right[i] * 0.4f);
+            BitConverter.TryWriteBytes(interleaved.AsSpan(i * 8, 4), Math.Clamp(left[i] * 0.4f, -1f, 1f));
+            BitConverter.TryWriteBytes(interleaved.AsSpan(i * 8 + 4, 4), Math.Clamp(right[i] * 0.4f, -1f, 1f));
         }
         var buffer = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(sr, 2)) { DiscardOnBufferOverflow = true };
         buffer.AddSamples(interleaved, 0, interleaved.Length);
         using var enumerator = new MMDeviceEnumerator();
         _previewDevice = enumerator.GetDevice(Selected.Id);
         _preview = new WasapiOut(_previewDevice, AudioClientShareMode.Shared, true, (int)Math.Max(1, Selected.PeriodMs));
+
         _preview.Init(buffer);
         _preview.Play();
     }
@@ -336,6 +345,8 @@ sealed class GuideForm : Form
         if (map.TryGetValue("quiet", out var quiet) && int.TryParse(quiet, out var quietValue)) _room.Value = Math.Clamp(quietValue, 0, 100);
         if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "well" ? 1 : 0;
         if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
+        _loudLabel.Text = "Footstep hit  " + _loud.Value;
+        _roomLabel.Text = "Surround quiet  " + _room.Value;
         return (headphones, on == "1");
     }
 }
