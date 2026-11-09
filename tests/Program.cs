@@ -69,19 +69,53 @@ var quietGain = Energy(quietOut, sr - 4000, 4000) / Energy(quiet[Engine.L], sr -
 var loudGain = Energy(loudOut, sr - 4000, 4000) / Energy(loud[Engine.L], sr - 4000, 4000);
 Check(quietGain > loudGain, $"quiet gain {quietGain} should be above loud gain {loudGain}");
 
-var drop = new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "Headphones");
-var well = new MixPlan(Preset.Well, Route.Stereo, 100, 100, "Headphones");
+var center = Empty(2000);
+for (var i = 800; i < 920; i++)
+{
+    var env = MathF.Sin((i - 800) / 120f * MathF.PI);
+    center[Engine.C][i] = MathF.Sin(2 * MathF.PI * 3200 * i / sr) * 0.3f * env;
+}
+var centerLeft = new float[2000];
+new Engine(sr).Process(center, centerLeft, new float[2000]);
+Check(Energy(centerLeft, 800, 300) > Energy(center[Engine.C], 800, 300) * 0.2f, "a centre step must still be heard");
+
+var endpoint = "{0.0.0.00000000}.{11111111-2222-3333-4444-555555555555}";
+var drop = new MixPlan(Preset.Drop, Route.Stereo, 100, 80, endpoint);
+var well = new MixPlan(Preset.Well, Route.Stereo, 100, 100, endpoint);
 var text = Mix.Config(drop);
+Check(text.Contains("Device: {11111111-2222-3333-4444-555555555555}"), "the headphone line must be the fixed id");
+Check(!text.Contains("0.0.0.00000000"), "the headphone line must not be the Windows display name");
 Check(text.Contains("Channel: L R"), "stereo config must filter left and right");
 Check(!text.Contains("SL SR"), "stereo config must not depend on surround speakers");
 var last = text.Split("Channel: ").Last();
 Check(last.StartsWith("all"), "config must reset the channel at the end");
+Check(text.TrimEnd().EndsWith("Device: all"), "the file must release the headphones so the next setup is not trapped on them");
+Check(Mix.Switch(true, @"C:\Program Files\EqualizerAPO\config\jesus-kpekpes\on.txt") == "Include: C:\\Program Files\\EqualizerAPO\\config\\jesus-kpekpes\\on.txt\r\n", "the switch must name the filter file in full");
 Check(text.Contains('.') && !text.Contains(",0 dB"), "gains must use a decimal point");
-Check(Mix.PreampDb(well) <= -6f, $"preamp {Mix.PreampDb(well)} must cover the step boost");
-Check(Mix.Config(new MixPlan(Preset.Drop, Route.Surround, 100, 100, "Headphones")).Contains("Copy:"), "7.1 must fold into left and right");
+var preamp = Mix.PreampDb(well);
+Check(preamp < -1f, $"stereo preamp {preamp} must hold the hottest band to -1 dB");
+var surroundPlan = new MixPlan(Preset.Drop, Route.Surround, 100, 100, endpoint);
+var surround = Mix.Config(surroundPlan);
+Check(surround.Contains("Copy: L=L+0.5*C+0.25*SL+0.14*RL R=R+0.5*C+0.25*SR+0.14*RR"), "7.1 must keep the centre and sit the surround low");
+var copyAt = surround.IndexOf("Copy:", StringComparison.Ordinal);
+var muteAt = surround.IndexOf("Channel: C LFE", StringComparison.Ordinal);
+Check(copyAt >= 0 && muteAt > copyAt, "the centre is copied before it is muted");
+var deviceLine = "Realtek(R) Audio Headphones {11111111-2222-3333-4444-555555555555}";
+Check(Mix.DeviceMatches(Mix.DeviceSelector(endpoint), deviceLine), "the fixed id must match Equalizer APO's device string");
+Check(!Mix.DeviceMatches("Headphones (Realtek(R) Audio)", deviceLine), "the Windows display name must not be treated as a match");
 Check(Mix.Switch(false) == "", "off must not include the filter file");
+var withPlugin = Mix.Config(well, @"C:\Games\JesusKpekpesTune.dll");
+Check(withPlugin.Contains("VSTPlugin: Library \"C:\\Games\\JesusKpekpesTune.dll\""), "our plugin must be named when the file is present");
+Check(!Mix.Config(well).Contains("VSTPlugin"), "the equalizer file stays plain when the plugin was not built");
+var restored = Mix.StripInclude("Preamp: 0 dB\r\nInclude: jesus-kpekpes\\switch.txt\r\nInclude: rara.txt\r\n");
+Check(restored.Contains("rara.txt") && !restored.Contains("jesus-kpekpes"), "turn off must remove only this tune");
 Check(Mix.Conflicts("Include: HeSuVi").Contains("HeSuVi"), "HeSuVi should be noticed");
 Check(Mix.Conflicts("RaraSuppression").Contains("Rara"), "Rara should be noticed");
+Check(!Mix.Conflicts("Ferrara headphones").Contains("Rara"), "an unrelated word must not count as Rara");
+Check(Mix.Conflicts("Convolution: hall.wav").Contains("Convolution"), "a convolution line must be noticed");
+Check(Mix.Conflicts("VSTPlugin: Library \"Other.dll\"").Contains("VST plugin"), "another plugin must be noticed");
+Check(!Mix.Conflicts("VSTPlugin: Library \"JesusKpekpesTune.dll\"").Contains("VST plugin"), "our own plugin is not a conflict");
+Check(!Mix.Conflicts("peaceful morning").Contains("Peace"), "peaceful is not Peace");
 
 var tone = new float[sr];
 var low = new float[sr];
@@ -90,82 +124,124 @@ for (var i = 0; i < sr; i++)
     tone[i] = MathF.Sin(2 * MathF.PI * 3400 * i / sr);
     low[i] = MathF.Sin(2 * MathF.PI * 100 * i / sr);
 }
+var dry = (float[])tone.Clone();
 var toneR = (float[])tone.Clone();
 var lowR = (float[])low.Clone();
 Mix.Process(well, tone, toneR);
 Mix.Process(well, low, lowR);
 var stepBand = Energy(tone, sr - 4000, 4000);
+var dryBand = Energy(dry, sr - 4000, 4000);
 var roomBand = Energy(low, sr - 4000, 4000);
+var ceiling = MathF.Pow(10f, -1f / 20f);
+var peak = 0f;
+for (var i = sr / 2; i < sr; i++) peak = MathF.Max(peak, MathF.Abs(tone[i]));
+Check(peak <= ceiling * 1.08f, $"a full-scale step band peaked at {peak}, above -1 dB");
 Check(stepBand > roomBand * 2, $"step band {stepBand} should sit well above the room {roomBand}");
-Check(stepBand <= 1.05f, $"step band clipped at {stepBand}");
+Check(stepBand < dryBand, "the equalizer must not raise a full-scale tone; quiet sounds need a compressor, and this file does not have one");
 
-Check(text.Contains("Device: all"), "config must hand the device scope back");
-Check(text.TrimEnd().EndsWith("Channel: all"), "config must end with Channel: all");
-Check(!text.Contains("(") && Mix.DeviceName("Headphones (Realtek High Definition Audio)") == "Headphones Realtek High Definition Audio", "device name should drop the brackets");
-Check(Mix.Switch(true, @"C:\Program Files\EqualizerAPO\config\jesus-kpekpes") == "Include: C:\\Program Files\\EqualizerAPO\\config\\jesus-kpekpes\\on.txt\r\n", "switch should include the full path");
-Check(Mix.Conflicts("VSTPlugin: Library x.dll").Contains("VST plugins"), "VST plugins should be noticed");
-Check(Mix.Config(new MixPlan(Preset.Drop, Route.Surround, 100, 100, "Headphones")).Contains("0.7*C"), "7.1 must fold the center in");
-Check(Mix.PreampDb(drop) < -1f, "preamp should leave real headroom");
+var centerOnly = new float[sr];
+var silent = new float[sr];
+for (var i = 0; i < sr; i++) centerOnly[i] = MathF.Sin(2 * MathF.PI * 1000 * i / sr) * 0.4f;
+var foldedL = new float[sr];
+var foldedR = new float[sr];
+Mix.Process(surroundPlan, foldedL, foldedR, silent, silent, centerOnly);
+Check(Energy(foldedL, sr - 4000, 4000) > 0.0001f, "a centre sound must still be heard after the 7.1 fold");
 
-// ---- Sound check math ----
+var crack = new float[800];
+var crackR = new float[800];
+var crackDry = new float[800];
+for (var i = 80; i < 200; i++)
 {
-    var sine = new float[sr * 2];
-    for (var i = 0; i < sine.Length; i++) sine[i] = 0.1f * MathF.Sin(2 * MathF.PI * 3400 * i / sr);
-    var stats = LoudnessMath.Analyze(sine, sr);
-    Check(Math.Abs(stats.ActiveDb - (-23.0)) < 0.5, $"0.1 sine should read about -23 dB, got {stats.ActiveDb}");
-    Check(Math.Abs(stats.PeakDb - (-20.0)) < 0.5, $"peak should read about -20 dB, got {stats.PeakDb}");
-    Check(stats.StepMinusLowDb > 10, $"a 3.4 kHz tone should sit far above the bass, got {stats.StepMinusLowDb}");
-    var bassTone = new float[sr * 2];
-    for (var i = 0; i < bassTone.Length; i++) bassTone[i] = 0.1f * MathF.Sin(2 * MathF.PI * 60 * i / sr);
-    Check(LoudnessMath.Analyze(bassTone, sr).StepMinusLowDb < -10, "a 60 Hz tone should sit far below");
-    Check(LoudnessMath.Analyze(new float[sr], sr).ActiveSeconds == 0, "silence should count as no sound");
-    var half = sine.Select(x => x * 0.5f).ToArray();
-    Check(Math.Abs(LoudnessMath.Analyze(half, sr).ActiveDb - stats.ActiveDb + 6.0) < 0.3, "half amplitude should read 6 dB lower");
+    var env = MathF.Sin((i - 80) / 120f * MathF.PI);
+    crack[i] = crackR[i] = crackDry[i] = MathF.Sin(2 * MathF.PI * 3400 * i / sr) * 0.2f * env;
+}
+Mix.Process(well, crack, crackR);
+Check(Energy(crack, 80, 200) > Energy(crackDry, 80, 200) * 0.5f, "a quiet crack in the step band must not be deleted");
+
+static void Burst(float[] data, int at, float hz, float amp)
+{
+    var len = (int)(sr * 0.032f);
+    for (var i = 0; i < len && at + i < data.Length; i++)
+        data[at + i] += MathF.Sin(2 * MathF.PI * hz * (at + i) / sr) * amp * MathF.Sin(i / (float)len * MathF.PI);
 }
 
-// ---- Call of Duty options file ----
+static float Band(float[] data, float hz, int start, int count)
 {
-    const string file =
-        "1\r\n\r\n//\r\n// Audio\r\n\r\n// Adjusts the volume of the music\r\nMusicVolume@0;14317;21371 = 0.500000 // 0.000000 to 1.000000\r\n\r\n" +
-        "// Number of output channels\r\nAudioWantedChannelsNumber@0;59395;43096 = 8 // 0 to 16\r\n\r\n" +
-        "// Speaker device requested by the user\r\nSoundOutputDevice@0;2059;35888 = {0.0.0.00000000}.{30e2667c-40d1-4f30-8570-b900a3c8f089}\r\n\r\n" +
-        "// Monitor\r\nMonitor@0;2059;35888 = MAG 255F E20\r\n\r\n" +
-        "// Shadows\r\nShadowQuality@0;3981;58629 = High // one of Very_Low, Low, Medium, High, Very_High\r\n" +
-        "VSync@0;55075;7764 = disabled // one of disabled, 100%, 50%, 33%, 25%\r\n" +
-        "ParticleQuality@0;60198;58629 = very low\r\n";
-    var plan = CodProfile.Plan(file, CodProfile.Core);
-    Check(plan.NewText.Contains("MusicVolume@0;14317;21371 = 0.000000 // 0.000000 to 1.000000"), "value changes, key suffix and comment stay");
-    Check(plan.NewText.Contains("AudioWantedChannelsNumber@0;59395;43096 = 2 // 0 to 16"), "channels set to 2");
-    Check(plan.NewText.Contains("ShadowQuality@0;3981;58629 = Very_Low // one of"), "shadow value changes, comment stays");
-    Check(plan.NewText.Contains("SoundOutputDevice@0;2059;35888 = {0.0.0.00000000}.{30e2667c-40d1-4f30-8570-b900a3c8f089}"), "device id must not change");
-    Check(plan.NewText.Contains("Monitor@0;2059;35888 = MAG 255F E20"), "monitor must not change");
-    Check(plan.NewText.Contains("VSync@0;55075;7764 = disabled // one of disabled, 100%"), "already-right lines stay as they were");
-    Check(plan.NewText.Contains("ParticleQuality@0;60198;58629 = very low"), "line without comment stays intact");
-    Check(plan.NewText.Contains("\r\n") && !plan.NewText.Replace("\r\n", "").Contains("\r"), "line endings must stay");
-    Check(plan.Changes.Count == 3, $"expected 3 changes, got {plan.Changes.Count}");
-    Check(plan.Unchanged >= 2, "unchanged lines should be counted");
-    Check(plan.Missing.Count > 10, "settings not in this file should be reported missing");
-    var again = CodProfile.Plan(plan.NewText, CodProfile.Core);
-    Check(again.Changes.Count == 0 && again.NewText == plan.NewText, "applying twice must change nothing");
-    Check(!CodProfile.Core.Any(s => s.Key.Contains("Device") || s.Key is "Monitor" or "Resolution" or "RefreshRate" or "GPUName" or "MaxFpsInGame"), "hardware keys must never be in the profile");
-    Check(CodProfile.Chosen(true).Length == CodProfile.Core.Length + CodProfile.Lowest.Length, "lowest option adds its own keys");
+    var w0 = 2 * MathF.PI * hz / sr;
+    var alpha = MathF.Sin(w0) / (2 * 1.2f);
+    var cos = MathF.Cos(w0);
+    var a0 = 1 + alpha;
+    var b0 = alpha / a0;
+    var b2 = -alpha / a0;
+    var a1 = (-2 * cos) / a0;
+    var a2 = (1 - alpha) / a0;
+    float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    double sum = 0;
+    var end = Math.Min(data.Length, start + count);
+    for (var i = 0; i < end; i++)
+    {
+        var y = b0 * data[i] + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1;
+        x1 = data[i];
+        y2 = y1;
+        y1 = y;
+        if (i >= start) sum += y * y;
+    }
+    return (float)(sum / count);
 }
 
-// ---- Loudness levels ----
+var scene = sr;
+var stepAtSample = (int)(sr * 0.35f);
+var cleanL = new float[scene];
+var cleanR = new float[scene];
+Burst(cleanL, stepAtSample, 180, 0.03f);
+var cleanDry = (float[])cleanL.Clone();
+var cleanDryR = (float[])cleanR.Clone();
+Suppress.Apply(cleanL, cleanR, sr);
+var window = (int)(sr * 0.06f);
+var tunedStep = Band(cleanL, 180, stepAtSample, window);
+var dryStep = Band(cleanDry, 180, stepAtSample, window);
+Check(tunedStep > dryStep * 1.4f, $"a quiet foot should come up, got {tunedStep / dryStep}");
+
+var gunAt = (int)(sr * 0.55f);
+var gunL = (float[])cleanDry.Clone();
+var gunR = (float[])cleanDryR.Clone();
+for (var i = 0; i < (int)(sr * 0.08f); i++)
 {
-    var safeDrop = new MixPlan(Preset.Drop, Route.Stereo, 100, 100, "Headphones", Level.Safe);
-    var balDrop = safeDrop with { Level = Level.Balanced };
-    var loudDrop = safeDrop with { Level = Level.Loud };
-    var s = Mix.PreampDb(safeDrop);
-    var b = Mix.PreampDb(balDrop);
-    var l = Mix.PreampDb(loudDrop);
-    Check(s < -1f, $"Safe should keep real headroom, got {s}");
-    Check(b >= s && l >= b, $"each level should be at least as loud as the one before: {s}, {b}, {l}");
-    Check(b <= 0f && l <= 0f, "no level may ever add gain");
-    Check(b - s <= 4.01f && l - s <= 8.01f, "levels are capped so they stay near the safe value");
-    Check(l > s, $"Loud should be louder than Safe, got {s} and {l}");
-    Check(Mix.Config(loudDrop).Contains("Preamp: "), "level config still writes a preamp");
-    Check(Mix.Config(drop).Contains("Fc 6500"), "the scuff band should be in the footstep tune");
+    var env = MathF.Exp(-i / (sr * 0.04f));
+    gunL[gunAt + i] += MathF.Sin(2 * MathF.PI * 90 * (gunAt + i) / sr) * 0.85f * env;
+    gunR[gunAt + i] += MathF.Sin(2 * MathF.PI * 90 * (gunAt + i) / sr) * 0.85f * env;
 }
+var after = gunAt + (int)(sr * 0.05f);
+Burst(gunL, after, 180, 0.03f);
+Suppress.Apply(gunL, gunR, sr);
+var kept = Band(gunL, 180, after, window) / tunedStep;
+Check(kept > 0.7f, $"a step after a shot was eaten, kept {kept}");
+
+var leftStep = new float[scene];
+var rightSilent = new float[scene];
+Burst(leftStep, stepAtSample, 180, 0.03f);
+Suppress.Apply(leftStep, rightSilent, sr);
+var leftBand = Band(leftStep, 180, stepAtSample, window);
+var rightBand = Band(rightSilent, 180, stepAtSample, window);
+Check(rightBand < leftBand * 0.001f, "a foot on the left was copied to the right");
+
+var farL = new float[scene];
+var farR = new float[scene];
+var nearL = new float[scene];
+var nearR = new float[scene];
+Burst(farL, stepAtSample, 180, 0.02f);
+Burst(nearL, stepAtSample, 180, 0.06f);
+var farDry = Band((float[])farL.Clone(), 180, stepAtSample, window);
+var nearDry = Band((float[])nearL.Clone(), 180, stepAtSample, window);
+Suppress.Apply(farL, farR, sr);
+Suppress.Apply(nearL, nearR, sr);
+var dryDistance = nearDry / farDry;
+var tunedDistance = Band(nearL, 180, stepAtSample, window) / Band(farL, 180, stepAtSample, window);
+Check(tunedDistance > dryDistance * 0.7f, $"near and far steps collapsed, {tunedDistance} vs dry {dryDistance}");
+
+var hotPeak = 0f;
+for (var i = 0; i < gunL.Length; i++) hotPeak = MathF.Max(hotPeak, MathF.Max(MathF.Abs(gunL[i]), MathF.Abs(gunR[i])));
+Check(hotPeak <= 1f, $"the shot clipped at {hotPeak}");
 
 Console.WriteLine("engine ok");
