@@ -1,9 +1,10 @@
 /* Build on Windows, from this folder:
    x86_64-w64-mingw32-gcc -shared -O2 -o JesusKpekpesTune.dll tune.c -lm
-   The text file is the equalizer. This plugin raises only the foot band.
+   The text file is the equalizer. Classic mode is the default. It raises only the foot band.
    The foot band is raised by the same amount in every ear, so the loudness difference between the ears is kept.
    The lift only ever adds level: it eases back to nothing as the foot band gets loud and is never below the input.
-   A gun is turned down in its own band, on the ear that fired. The other ear is never touched. */
+   A gun is turned down in its own band, on the ear that fired. The other ear is never touched.
+   Nova mode is off until the host sets the Nova parameter. In that mode a step is lifted only while it is a hit. */
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -25,6 +26,7 @@ enum {
     OP_RATE = 10,
     OP_BLOCK = 11,
     OP_MAINS = 12,
+    OP_PARAM_NAME = 8,
     OP_NAME = 45,
     OP_VENDOR = 47,
     OP_PRODUCT = 48,
@@ -70,14 +72,18 @@ typedef struct {
 } Stage;
 
 typedef struct {
-    Stage gun, foot;
+    Stage gun, foot, tick;
     float foot_env, gun_env;
     float foot_attack, foot_release, gun_attack, gun_release;
+    float weight_fast, weight_slow, tick_fast, tick_slow;
+    float fast_a, fast_r, slow_a, slow_r;
 } Lane;
 
 typedef struct {
     Lane lane[8];
     float rate;
+    float hit;
+    int mode;
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
@@ -156,8 +162,102 @@ static float finish(Lane* lane, const Split* part, float foot_gain) {
     return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
 }
 
+static void follow(float* env, float level, float attack, float release) {
+    *env += (level - *env) * (level > *env ? attack : release);
+    if (*env < 1e-20f) *env = 0.f;
+}
+
+static void arm_nova(Lane* lane, float rate) {
+    if (rate < 1000.f) rate = 48000.f;
+    memset(lane, 0, sizeof *lane);
+    set_band(&lane->gun, 1400.f, 0.7f, rate);
+    set_band(&lane->foot, 220.f, 1.0f, rate);
+    set_band(&lane->tick, 3200.f, 1.1f, rate);
+    lane->fast_a = 1.f - expf(-1.f / (rate * 0.0025f));
+    lane->fast_r = 1.f - expf(-1.f / (rate * 0.040f));
+    lane->slow_a = 1.f - expf(-1.f / (rate * 0.080f));
+    lane->slow_r = 1.f - expf(-1.f / (rate * 0.400f));
+    lane->gun_attack = 1.f - expf(-1.f / (rate * 0.003f));
+    lane->gun_release = 1.f - expf(-1.f / (rate * 0.045f));
+}
+
+/* One gain for every ear. A steady band (ratio near 1) stays at 1. A quiet hit is lifted, up to max_db. */
+static float transient_gain(float fast, float ratio, float max_db) {
+    float novelty, edge, level, quiet, db;
+    if (max_db <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 1.f;
+    novelty = 20.f * log10f(ratio);
+    if (novelty > 18.f) novelty = 18.f;
+    edge = novelty / 12.f;
+    if (edge > 1.f) edge = 1.f;
+    level = 20.f * log10f(fast + 1e-8f);
+    quiet = (-6.f - level) / 26.f;
+    if (quiet < 0.f) quiet = 0.f;
+    if (quiet > 1.f) quiet = 1.f;
+    db = max_db * quiet * edge;
+    if (db <= 0.f) return 1.f;
+    return powf(10.f, db / 20.f);
+}
+
+static void consider(float fast, float slow, float* best_fast, float* best_ratio) {
+    float ratio = fast / (slow + 1e-5f);
+    if (fast > *best_fast) *best_fast = fast;
+    if (ratio > *best_ratio) *best_ratio = ratio;
+}
+
+static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
+    Bank* bank = effect->object;
+    float max_weight = 7.f * bank->hit;
+    float max_tick = 10.f * bank->hit;
+    i32 i, ch, nch = effect->inputs;
+    if (nch > 8) nch = 8;
+    for (i = 0; i < frames; i++) {
+        float best_w_fast = 0.f, best_w_ratio = 1.f, best_t_fast = 0.f, best_t_ratio = 1.f;
+        float weight_gain, tick_gain;
+        float weight_b[8] = { 0 }, tick_b[8] = { 0 }, gun_b[8] = { 0 }, other_b[8] = { 0 };
+        for (ch = 0; ch < nch; ch++) {
+            Lane* lane = &bank->lane[ch];
+            float x, w, t, g;
+            if (!inputs[ch] || !outputs[ch]) continue;
+            x = inputs[ch][i];
+            w = tick(&lane->foot, x);
+            t = tick(&lane->tick, x);
+            g = tick(&lane->gun, x);
+            weight_b[ch] = w;
+            tick_b[ch] = t;
+            gun_b[ch] = g;
+            other_b[ch] = x - w - t - g;
+            follow(&lane->weight_fast, fabsf(w), lane->fast_a, lane->fast_r);
+            follow(&lane->weight_slow, fabsf(w), lane->slow_a, lane->slow_r);
+            follow(&lane->tick_fast, fabsf(t), lane->fast_a, lane->fast_r);
+            follow(&lane->tick_slow, fabsf(t), lane->slow_a, lane->slow_r);
+            follow(&lane->gun_env, fabsf(g), lane->gun_attack, lane->gun_release);
+            consider(lane->weight_fast, lane->weight_slow, &best_w_fast, &best_w_ratio);
+            consider(lane->tick_fast, lane->tick_slow, &best_t_fast, &best_t_ratio);
+        }
+        weight_gain = transient_gain(best_w_fast, best_w_ratio, max_weight);
+        tick_gain = transient_gain(best_t_fast, best_t_ratio, max_tick);
+        for (ch = 0; ch < nch; ch++) {
+            Lane* lane;
+            float gun_gain, y, mag;
+            if (!inputs[ch] || !outputs[ch]) continue;
+            lane = &bank->lane[ch];
+            gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+            y = other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
+            mag = fabsf(y);
+            if (mag > 0.8912509f)
+                y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
+            outputs[ch][i] = y;
+        }
+    }
+}
+
 static void replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
     Bank* bank = effect ? effect->object : 0;
+    if (bank && bank->mode) {
+        if (!inputs || !outputs || frames < 1) return;
+        nova_replace(effect, inputs, outputs, frames);
+        return;
+    }
     Split part[8];
     i32 i, ch;
     if (!bank || frames < 1 || !inputs || !outputs) return;
@@ -177,8 +277,34 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
     }
 }
 
-static void set_param(Effect* effect, i32 index, float value) { (void)effect; (void)index; (void)value; }
-static float get_param(Effect* effect, i32 index) { (void)effect; (void)index; return 0.f; }
+static void set_param(Effect* effect, i32 index, float value) {
+    Bank* bank = effect ? effect->object : 0;
+    i32 ch;
+    if (!bank) return;
+    if (index == 0) {
+        int mode = value >= 0.5f ? 1 : 0;
+        if (mode == bank->mode) return;
+        bank->mode = mode;
+        for (ch = 0; ch < 8; ch++) {
+            if (mode) arm_nova(&bank->lane[ch], bank->rate);
+            else arm(&bank->lane[ch], bank->rate);
+        }
+        return;
+    }
+    if (index == 1) {
+        if (value < 0.f) value = 0.f;
+        if (value > 1.f) value = 1.f;
+        bank->hit = value;
+    }
+}
+
+static float get_param(Effect* effect, i32 index) {
+    Bank* bank = effect ? effect->object : 0;
+    if (!bank) return 0.f;
+    if (index == 0) return bank->mode ? 1.f : 0.f;
+    if (index == 1) return bank->hit;
+    return 0.f;
+}
 
 static iptr dispatch(Effect* effect, i32 op, i32 index, iptr value, void* ptr, float opt) {
     Bank* bank = effect ? effect->object : 0;
@@ -194,7 +320,15 @@ static iptr dispatch(Effect* effect, i32 op, i32 index, iptr value, void* ptr, f
     }
     if (op == OP_RATE && bank && opt > 0.f) {
         bank->rate = opt;
-        for (ch = 0; ch < 8; ch++) arm(&bank->lane[ch], opt);
+        for (ch = 0; ch < 8; ch++) {
+            if (bank->mode) arm_nova(&bank->lane[ch], opt);
+            else arm(&bank->lane[ch], opt);
+        }
+        return 1;
+    }
+    if (op == OP_PARAM_NAME && ptr) {
+        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : "";
+        strncpy((char*)ptr, name, 8);
         return 1;
     }
     if (op == OP_BLOCK || op == OP_MAINS || op == OP_START || op == OP_STOP) return 1;
@@ -224,6 +358,8 @@ EXPORT Effect* VSTPluginMain(void* host) {
     }
     for (ch = 0; ch < 8; ch++) arm(&bank->lane[ch], 48000.f);
     bank->rate = 48000.f;
+    bank->hit = 1.f;
+    bank->mode = 0;
     effect->magic = 0x56737450;
     effect->dispatch = dispatch;
     effect->older = (void (*)(Effect*, float**, float**, i32))replace;
@@ -232,6 +368,7 @@ EXPORT Effect* VSTPluginMain(void* host) {
     effect->inputs = 8;
     effect->outputs = 8;
     effect->flags = 1 << 4;
+    effect->params = 2;
     effect->delay = 0;
     effect->object = bank;
     effect->identity = 0x4A6B5475;
@@ -281,6 +418,69 @@ static int check_ears(void) {
     }
     return bad;
 }
+
+static double energy(const float* x, int from, int count) {
+    double sum = 0;
+    int i;
+    for (i = 0; i < count; i++) sum += (double)x[from + i] * x[from + i];
+    return sum;
+}
+
+/* Nova is a separate mode. A steady 3.2 kHz tone must not be lifted. A short hit must be. */
+static int check_nova(void) {
+    enum { sr = 48000, n = 48000 };
+    static float tone[n], tone_r[n], dry[n];
+    static float burst[n], burst_r[n], burst_dry[n];
+    Effect* e = VSTPluginMain(0);
+    float* in[8] = { tone, tone_r };
+    float* out[8] = { tone, tone_r };
+    char name0[9], name1[9];
+    int i, bad = 0;
+    int burst_at = n / 3;
+    int burst_len = (int)(sr * 0.032f);
+    double steady, hit;
+    memset(name0, 0, sizeof name0);
+    memset(name1, 0, sizeof name1);
+    dispatch(e, OP_PARAM_NAME, 0, 0, name0, 0.f);
+    dispatch(e, OP_PARAM_NAME, 1, 0, name1, 0.f);
+    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 2) bad = 1;
+    if (get_param(e, 0) != 0.f || get_param(e, 1) != 1.f) bad = 1;
+    e->set_param(e, 0, 1.f);
+    e->set_param(e, 1, 1.f);
+    for (i = 0; i < n; i++) tone[i] = sinf(2.f * 3.14159265f * 3200.f * i / sr) * 0.03f;
+    memcpy(dry, tone, sizeof dry);
+    memset(tone_r, 0, sizeof tone_r);
+    replace(e, in, out, n);
+    steady = energy(tone, n - n / 5, n / 5) / energy(dry, n - n / 5, n / 5);
+    printf("nova steady gain %.3f\n", steady);
+    if (!(steady > 0.7 && steady < 1.4)) bad = 1;
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+
+    memset(burst, 0, sizeof burst);
+    memset(burst_r, 0, sizeof burst_r);
+    for (i = 0; i < burst_len; i++) {
+        float env = sinf((float)i / (float)burst_len * 3.14159265f);
+        burst[burst_at + i] = sinf(2.f * 3.14159265f * 3200.f * (burst_at + i) / sr) * 0.03f * env;
+    }
+    memcpy(burst_dry, burst, sizeof burst);
+    e = VSTPluginMain(0);
+    e->set_param(e, 0, 1.f);
+    in[0] = burst; in[1] = burst_r; out[0] = burst; out[1] = burst_r;
+    replace(e, in, out, n);
+    hit = energy(burst, burst_at, burst_len + 400) / energy(burst_dry, burst_at, burst_len + 400);
+    printf("nova burst gain %.3f\n", hit);
+    if (!(hit > steady * 2.0)) bad = 1;
+    {
+        static float z[64], zr[64];
+        float* zin[8] = { z, zr };
+        float* zout[8] = { z, zr };
+        replace(e, zin, zout, 64);
+        for (i = 0; i < 64; i++) if (z[i] != 0.f || zr[i] != 0.f) bad = 1;
+    }
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    return bad;
+}
+
 int main(void) {
     enum { sr = 48000, n = 48000 };
     static float left[n], right[n];
@@ -310,6 +510,7 @@ int main(void) {
     printf("quiet_energy %.6f loud_rms %.4f peak %.3f layout %d\n", quiet, sqrt(loud / 2000.0), peak, (int)offsetof(Effect, replace));
     dispatch(effect, OP_CLOSE, 0, 0, 0, 0);
     if (!(quiet > 0.0008 && peak < 0.98f)) return 1;
-    return check_ears();
+    if (check_ears()) return 1;
+    return check_nova();
 }
 #endif

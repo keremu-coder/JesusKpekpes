@@ -286,13 +286,138 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
         var gapOut = Db(left, rate / 2, rate) - Db(right, rate / 2, rate);
         Check(Math.Abs(gapOut - gapIn) < 0.1, $"{levelDb} dBFS: the gap between the ears must stay {gapIn:0.00}, got {gapOut:0.00}");
         Check(Db(left, rate / 2, rate) >= Db(inL, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the louder ear must not be turned down");
-        Check(Db(right, rate / 2, rate) >= Db(inR, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the quieter ear must not be turned down");
+    Check(Db(right, rate / 2, rate) >= Db(inR, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the quieter ear must not be turned down");
         if (levelDb <= -30)
             Check(Db(left, rate / 2, rate) - Db(inL, rate / 2, rate) > 5.5, $"{levelDb} dBFS: a quiet foot should be lifted by about 6 dB");
     }
     var hush = new float[rate];
     TuneEngine.CompressLinked([hush], rate);
     Check(hush.All(v => v == 0f), "silence must stay silence");
+}
+
+// ---- Nova Pro: extra profile. Drop and Well stay. A hit is lifted. A steady tone is not. ----
+{
+    const int rate = 48000;
+    double Db(float[] x, int from, int to)
+    {
+        double s = 0;
+        for (var i = from; i < to; i++) s += (double)x[i] * x[i];
+        return 10 * Math.Log10(s / (to - from) + 1e-20);
+    }
+    var nova = new MixPlan(Preset.Nova, Route.Stereo, 100, 40, endpoint);
+    var novaText = Mix.Config(nova);
+    Check(novaText.Contains("Fc 3200 Hz Gain 6.0 dB"), "Nova puts the step tick at 3.2 kHz");
+    Check(novaText.Contains("Fc 8000 Hz Gain -4.5 dB"), "Nova pulls the 8 kHz peak down");
+    Check(!novaText.Contains("Fc 7200 Hz"), "Nova does not use the Drop peak");
+    Check(!novaText.Contains("SL SR"), "stereo Nova must not depend on surround speakers");
+    Check(Mix.Config(drop).Contains("Fc 7200 Hz") && !Mix.Config(drop).Contains("Fc 8000 Hz"), "Drop keeps its own curve");
+    Check(Mix.PreampDb(nova) < -1f, "Nova preamp must hold the hottest band down");
+    var novaPlugin = Mix.Config(nova, @"C:\Games\JesusKpekpesTune.dll");
+    Check(novaPlugin.Contains("Nova 1 Hit 1.00"), "the plugin must be told this is Nova at full hit");
+    Check(!Mix.Config(well, @"C:\Games\JesusKpekpesTune.dll").Contains("Nova "), "Well must not switch the plugin into Nova");
+    var novaOff = Mix.Config(new MixPlan(Preset.Nova, Route.Stereo, 0, 0, endpoint));
+    Check(novaOff.Contains("Fc 8000 Hz Gain -4.5 dB"), "the 8 kHz cut stays when the hit slider is down");
+    Check(novaOff.Contains("Fc 3200 Hz Gain 0.0 dB"), "the tick boost follows the hit slider");
+
+    var tick = new float[rate];
+    var tickR = new float[rate];
+    for (var i = 0; i < rate; i++) tick[i] = MathF.Sin(2 * MathF.PI * 3200 * i / rate) * 0.03f;
+    var tickDry = (float[])tick.Clone();
+    TuneEngine.ShapeNova([tick, tickR], rate, 100);
+    var tickGain = Energy(tick, rate - rate / 5, rate / 5) / Energy(tickDry, rate - rate / 5, rate / 5);
+    Check(tickGain > 0.7f && tickGain < 1.4f, $"a steady tick must not be lifted, gain {tickGain}");
+
+    var burstAt = rate / 3;
+    var burstLen = (int)(rate * 0.032f);
+    var burst = new float[rate];
+    var burstR = new float[rate];
+    for (var i = 0; i < burstLen; i++)
+    {
+        var env = MathF.Sin(i / (float)burstLen * MathF.PI);
+        burst[burstAt + i] = MathF.Sin(2 * MathF.PI * 3200 * (burstAt + i) / rate) * 0.03f * env;
+    }
+    var burstDry = (float[])burst.Clone();
+    TuneEngine.ShapeNova([burst, burstR], rate, 100);
+    var burstGain = Energy(burst, burstAt, burstLen + 400) / Energy(burstDry, burstAt, burstLen + 400);
+    Check(burstGain > tickGain * 2f, $"a step hit {burstGain} should beat the steady tone {tickGain}");
+
+    var quietHit = new float[200];
+    TuneEngine.ShapeNova([quietHit, new float[200]], rate, 100);
+    Check(quietHit.All(v => v == 0f), "Nova silence must stay silence");
+
+    var gapL = new float[rate];
+    var gapR = new float[rate];
+    var gapInL = new float[rate];
+    var gapInR = new float[rate];
+    var loudEar = 0.04f;
+    var quietEar = loudEar * MathF.Pow(10f, -15f / 20f);
+    for (var i = 0; i < rate; i++)
+    {
+        var wave = MathF.Sin(2 * MathF.PI * 3200 * i / rate);
+        gapInL[i] = gapL[i] = wave * loudEar;
+        gapInR[i] = gapR[i] = wave * quietEar;
+    }
+    Mix.Process(nova, gapL, gapR);
+    var gapIn = Db(gapInL, rate / 2, rate) - Db(gapInR, rate / 2, rate);
+    var gapOut = Db(gapL, rate / 2, rate) - Db(gapR, rate / 2, rate);
+    Check(Math.Abs(gapOut - gapIn) < 1.0, $"Nova must keep the {gapIn:0.00} dB gap between the ears, got {gapOut:0.00}");
+
+    var air = new float[rate];
+    var airR = new float[rate];
+    for (var i = 0; i < rate; i++) air[i] = MathF.Sin(2 * MathF.PI * 8000 * i / rate) * 0.2f;
+    var airDry = (float[])air.Clone();
+    Mix.Process(nova, air, airR);
+    var airGain = Energy(air, rate - 4000, 4000) / Energy(airDry, rate - 4000, 4000);
+    Check(airGain < 0.75f, $"the 8 kHz peak must come down, gain {airGain}");
+
+    var rumble = new float[rate];
+    var rumbleR = new float[rate];
+    for (var i = 0; i < rate; i++) rumble[i] = MathF.Sin(2 * MathF.PI * 70 * i / rate) * 0.2f;
+    var rumbleDry = (float[])rumble.Clone();
+    Mix.Process(nova, rumble, rumbleR);
+    Check(Energy(rumble, rate - 4000, 4000) < Energy(rumbleDry, rate - 4000, 4000), "low rumble must be turned down");
+
+    var fold = new MixPlan(Preset.Nova, Route.Surround, 100, 40, endpoint);
+    var foldText = Mix.Config(fold);
+    Check(foldText.Contains("Copy: L=L+0.707*C+0.500*SL+0.320*RL R=R+0.707*C+0.500*SR+0.320*RR"), "Nova 7.1 fold keeps left on the left");
+    Check(foldText.Contains("Preamp: -24.0 dB"), "Nova leaves the low speaker out");
+    Check(!foldText.Contains("untested"), "Nova 7.1 is not the untested fold");
+    var foldPlugin = Mix.Config(fold, @"C:\Games\JesusKpekpesTune.dll");
+    Check(foldPlugin.Contains("Channel: L R C SL SR RL RR\r\nVSTPlugin:"), "Nova 7.1 must not let the low speaker lift a step");
+    Check(Mix.Config(surroundPlan).Contains("Copy: L=L+0.5*C+0.25*SL+0.14*RL R=R+0.5*C+0.25*SR+0.14*RR"), "Drop 7.1 fold is unchanged");
+
+    float[][] Ears() => [new float[rate], new float[rate], new float[rate], new float[rate], new float[rate], new float[rate]];
+    void Hit(float[] ear)
+    {
+        for (var i = 0; i < burstLen; i++)
+        {
+            var env = MathF.Sin(i / (float)burstLen * MathF.PI);
+            ear[burstAt + i] = MathF.Sin(2 * MathF.PI * 3200 * (burstAt + i) / rate) * 0.05f * env;
+        }
+    }
+    var sideEars = Ears();
+    Hit(sideEars[2]);
+    Mix.Process(fold, sideEars[0], sideEars[1], sideEars[2], sideEars[3], sideEars[4], sideEars[5]);
+    var sideLeftEnergy = Energy(sideEars[0], burstAt, burstLen + 800);
+    var sideRightEnergy = Energy(sideEars[1], burstAt, burstLen + 800);
+    Check(sideRightEnergy < sideLeftEnergy * 0.05f, $"a left side step leaked to the right, {sideRightEnergy} vs {sideLeftEnergy}");
+
+    var rearEars = Ears();
+    Hit(rearEars[5]);
+    Mix.Process(fold, rearEars[0], rearEars[1], rearEars[2], rearEars[3], rearEars[4], rearEars[5]);
+    var rearLeftEnergy = Energy(rearEars[0], burstAt, burstLen + 800);
+    Check(sideLeftEnergy > rearLeftEnergy * 1.5f, $"a side step should beat a rear step, {sideLeftEnergy} vs {rearLeftEnergy}");
+    Check(rearLeftEnergy > sideLeftEnergy * 0.05f, "a rear step must still be heard");
+    Check(Energy(rearEars[1], burstAt, burstLen + 800) < rearLeftEnergy * 0.05f, "a left rear step leaked to the right");
+
+    var centreEars = Ears();
+    Hit(centreEars[4]);
+    Mix.Process(fold, centreEars[0], centreEars[1], centreEars[2], centreEars[3], centreEars[4], centreEars[5]);
+    var centreL = Energy(centreEars[0], burstAt, burstLen + 800);
+    var centreR = Energy(centreEars[1], burstAt, burstLen + 800);
+    var centreRatio = centreL / MathF.Max(1e-12f, centreR);
+    Check(centreRatio > 0.9f && centreRatio < 1.1f, $"a centre step must stay in the middle, ratio {centreRatio}");
+    Check(centreL > 1e-6f, "a centre step must be heard");
 }
 
 Console.WriteLine("engine ok");

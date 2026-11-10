@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace JesusKpekpes;
 
-enum Preset { Drop, Well }
+enum Preset { Drop, Well, Nova }
 
 enum Route { Stereo, Surround }
 
@@ -26,12 +26,15 @@ static class Mix
     {
         var n = CultureInfo.InvariantCulture;
         var filters = Filters(plan);
-        var preamp = string.IsNullOrWhiteSpace(plugin)
-            ? PreampDb(filters, plan.Route, plan.Level)
+        var nova = plan.Preset == Preset.Nova;
+        var preamp = string.IsNullOrWhiteSpace(plugin) || nova
+            ? PreampDb(filters, plan.Route, plan.Level, nova)
             : plan.Level switch { Level.Balanced => 1.5f, Level.Loud => 3f, _ => 0f };
         var text = new System.Text.StringBuilder();
         text.Append("Device: ").Append(DeviceSelector(plan.Device)).Append("\r\n");
-        if (plan.Route == Route.Surround)
+        if (plan.Route == Route.Surround && nova)
+            text.Append("# Nova Pro fold. Left stays left. Centre is split equally. Rear is quieter than beside you. The low speaker is not added.\r\n");
+        else if (plan.Route == Route.Surround)
             text.Append("# 7.1 is untested. The centre speaker and LFE are muted after the fold. That fold level was not measured.\r\n");
         if (plan.Route == Route.Surround)
         {
@@ -47,12 +50,27 @@ static class Mix
         }
         if (!string.IsNullOrWhiteSpace(plugin))
         {
-            text.Append("Channel: all\r\n");
-            text.Append("VSTPlugin: Library \"").Append(plugin).Append("\"\r\n");
+            // The low speaker is background. Nova must not let it vote for the step lift.
+            text.Append(nova && plan.Route == Route.Surround
+                ? "Channel: L R C SL SR RL RR\r\n"
+                : "Channel: all\r\n");
+            text.Append("VSTPlugin: Library \"").Append(plugin).Append('"');
+            if (nova)
+            {
+                var hit01 = Math.Clamp(plan.Hit, 0, 100) / 100f;
+                text.Append(" Nova 1 Hit ").Append(hit01.ToString("0.00", n));
+            }
+            text.Append("\r\n");
         }
         if (plan.Route == Route.Surround)
         {
-            text.Append("Copy: L=L+0.5*C+0.25*SL+0.14*RL R=R+0.5*C+0.25*SR+0.14*RR\r\n");
+            if (nova)
+            {
+                text.Append("Channel: all\r\n");
+                text.Append(FoldNova(n));
+            }
+            else
+                text.Append("Copy: L=L+0.5*C+0.25*SL+0.14*RL R=R+0.5*C+0.25*SR+0.14*RR\r\n");
             text.Append("Channel: C LFE SL SR RL RR\r\n");
             text.Append("Preamp: -120 dB\r\n");
         }
@@ -103,6 +121,7 @@ static class Mix
     {
         var filters = Filters(plan);
         var sr = sampleRate >= 1000 ? sampleRate : 48000;
+        var nova = plan.Preset == Preset.Nova;
         if (plan.Route == Route.Stereo)
         {
             var chainL = Chain(filters, sr);
@@ -116,18 +135,21 @@ static class Mix
                 left[i] = l;
                 right[i] = r;
             }
-            TuneEngine.CompressLinked([left, right], sr);
+            if (nova) TuneEngine.ShapeNova([left, right], sr, plan.Hit);
+            else TuneEngine.CompressLinked([left, right], sr);
             return;
         }
 
         var front = filters.Where(f => f.Channels == "L R").ToArray();
         var side = filters.Where(f => f.Channels == "SL SR RL RR").ToArray();
+        var centerBands = filters.Where(f => f.Channels == "C").ToArray();
         var frontL = Chain(front, sr);
         var frontR = Chain(front, sr);
         var sideL = Chain(side, sr);
         var sideR = Chain(side, sr);
         var rearL = Chain(side, sr);
         var rearR = Chain(side, sr);
+        var centerChain = Chain(centerBands, sr);
         for (var i = 0; i < left.Length; i++)
         {
             var l = left[i];
@@ -143,6 +165,7 @@ static class Mix
             foreach (var f in sideR) srch = f.Tick(srch);
             foreach (var f in rearL) rl = f.Tick(rl);
             foreach (var f in rearR) rr = f.Tick(rr);
+            foreach (var f in centerChain) c = f.Tick(c);
             left[i] = l;
             right[i] = r;
             if (sideLeft is not null) sideLeft[i] = sl;
@@ -151,7 +174,23 @@ static class Mix
             if (rearLeft is not null) rearLeft[i] = rl;
             if (rearRight is not null) rearRight[i] = rr;
         }
-        TuneEngine.CompressLinked(new[] { left, right, sideLeft, sideRight, center, rearLeft, rearRight }.OfType<float[]>().ToArray(), sr);
+        var ears = new[] { left, right, sideLeft, sideRight, center, rearLeft, rearRight }.OfType<float[]>().ToArray();
+        if (nova) TuneEngine.ShapeNova(ears, sr, plan.Hit);
+        else TuneEngine.CompressLinked(ears, sr);
+        if (nova)
+        {
+            for (var i = 0; i < left.Length; i++)
+            {
+                var sl = sideLeft is null ? 0 : sideLeft[i];
+                var srch = sideRight is null ? 0 : sideRight[i];
+                var c = center is null ? 0 : center[i];
+                var rl = rearLeft is null ? 0 : rearLeft[i];
+                var rr = rearRight is null ? 0 : rearRight[i];
+                left[i] = left[i] + NovaCenter * c + NovaSide * sl + NovaRear * rl;
+                right[i] = right[i] + NovaCenter * c + NovaSide * srch + NovaRear * rr;
+            }
+            return;
+        }
         const float surroundBed = 0.31622776f;
         for (var i = 0; i < left.Length; i++)
         {
@@ -186,14 +225,23 @@ static class Mix
         return string.Join("\r\n", kept).TrimEnd();
     }
 
-    public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route, plan.Level);
+    public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route, plan.Level, plan.Preset == Preset.Nova);
 
-    static float PreampDb(Band[] filters, Route route, Level level)
+    // Front plus centre, so a 7.1 Nova fold still has room when both speak at once.
+    const float NovaCenter = 0.707f;
+    const float NovaSide = 0.5f;
+    const float NovaRear = 0.32f;
+
+    static string FoldNova(CultureInfo n) =>
+        string.Format(n, "Copy: L=L+{0:0.000}*C+{1:0.000}*SL+{2:0.000}*RL R=R+{3:0.000}*C+{4:0.000}*SR+{5:0.000}*RR\r\n",
+            NovaCenter, NovaSide, NovaRear, NovaCenter, NovaSide, NovaRear);
+
+    static float PreampDb(Band[] filters, Route route, Level level, bool nova)
     {
         var worst = -120f;
         for (var hz = 40f; hz <= 16000f; hz *= 1.06f)
         {
-            var db = OutputDb(filters, route, hz);
+            var db = OutputDb(filters, route, hz, nova);
             if (db > worst) worst = db;
         }
         var safe = -(worst + 1f);
@@ -201,7 +249,7 @@ static class Mix
         return MathF.Min(-0.5f, safe + give);
     }
 
-    static float OutputDb(Band[] filters, Route route, float hz)
+    static float OutputDb(Band[] filters, Route route, float hz, bool nova)
     {
         float Mag(string channels)
         {
@@ -216,6 +264,11 @@ static class Mix
 
         if (route == Route.Stereo) return 20f * MathF.Log10(MathF.Max(1e-8f, Mag("L R")));
         var front = Mag("L R");
+        if (nova)
+        {
+            var stacked = front * (1f + NovaCenter);
+            return 20f * MathF.Log10(MathF.Max(1e-8f, stacked));
+        }
         var side = Mag("SL SR RL RR") * 0.31622776f;
         var folded = front + 0.5f + (0.25f + 0.14f) * side;
         return 20f * MathF.Log10(MathF.Max(1e-8f, folded));
@@ -225,6 +278,20 @@ static class Mix
     {
         var hit = Math.Clamp(plan.Hit, 0, 100) / 100f;
         var quiet = Math.Clamp(plan.Quiet, 0, 100) / 100f;
+        if (plan.Preset == Preset.Nova)
+        {
+            // Wired Nova Pro, small USB adapter treated as flat (Sonar and the GameDAC EQ off).
+            // Measured on this headset: a bass bump near 140 Hz, a dip around 3-4 kHz, a peak at 8 kHz.
+            // The tick is put on the dip, not on the peak. The 8 kHz cut does not follow the hit slider.
+            var bands = new List<Band>();
+            bands.AddRange(NovaBands("L R", hit, quiet));
+            if (plan.Route == Route.Surround)
+            {
+                bands.AddRange(NovaBands("C", hit, quiet));
+                bands.AddRange(NovaBands("SL SR RL RR", hit, quiet));
+            }
+            return bands.ToArray();
+        }
         if (plan.Route == Route.Surround)
         {
             return
@@ -256,7 +323,16 @@ static class Mix
         ];
     }
 
-    static float Lfe(MixPlan plan) => -(plan.Quiet / 100f * 18f);
+    static Band[] NovaBands(string channels, float hit, float quiet) =>
+    [
+        new(channels, Shelf.Low, 90, -(4f + quiet * 3f), 0.7f),
+        new(channels, Shelf.None, 220, hit * 4f, 1.0f),
+        new(channels, Shelf.None, 1200, -(2.5f + quiet * 1.5f), 0.7f),
+        new(channels, Shelf.None, 3200, hit * 6f, 1.1f),
+        new(channels, Shelf.None, 8000, -4.5f, 1.6f),
+    ];
+
+    static float Lfe(MixPlan plan) => plan.Preset == Preset.Nova ? -24f : -(plan.Quiet / 100f * 18f);
 
     static void Write(System.Text.StringBuilder text, CultureInfo n, string channels, IEnumerable<Band> filters)
     {
