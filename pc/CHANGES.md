@@ -81,3 +81,7 @@ Prefer maximum performance for Call of Duty is set through NVIDIA's NvAPI, not b
 ## Reflex and the in-game cap
 
 The game file sets `NvidiaReflex` to `Enabled + boost`. `CapFps` is turned on and `MaxFpsInGame` is set to one under the primary monitor (200 Hz becomes 199). The Windows refresh rate is not changed. If the rate cannot be read, the cap is left alone. Undo still restores the original file.
+
+## Hitch watch
+
+`-Action Hitch` (menu option 10, and the PC window button "Name the hitch") records about 20 seconds and prints the driver or process behind the longest stall: a delayed call, an interrupt, or a thread wake under 50 ms. It does not write the journal and it does not disable anything. If Windows will not give the trace, it says so and stops. The ranking is covered by `tests/Test-Logic.ps1`. A name does not add frames.

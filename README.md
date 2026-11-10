@@ -12,4 +12,6 @@ Check this PC reads Secure Boot, Resizable BAR, RAM speed and the Call of Duty c
 
 The Call of Duty settings window sets Reflex to On + boost, and the in-game frame cap to one under the primary monitor. A 200 Hz panel gets 199. Resolution, the Windows refresh rate, and DLSS stay as they are. Close the game first. Undo puts the original file back.
 
+Name the hitch watches for about 20 seconds while you play, then prints the driver or process behind the longest stall. It does not change a setting, it does not turn that driver off, and a name by itself does not add frames. If Windows will not give the trace, it says so and stops.
+
 Secure Boot stays on.

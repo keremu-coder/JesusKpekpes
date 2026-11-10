@@ -14,10 +14,11 @@
     .\Kpekpes.ps1 -Action Undo -Module Controller
     .\Kpekpes.ps1 -Action Optimize -Module PC -WhatIf   what will change, nothing is written
     .\Kpekpes.ps1 -Action Compare -Before a.csv -After b.csv
+    .\Kpekpes.ps1 -Action Hitch
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare')][string]$Action = 'Menu',
+    [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare', 'Hitch')][string]$Action = 'Menu',
     [ValidateSet('PC', 'Controller', 'Both')][string]$Module = 'Both',
     [switch]$Silent,
     [switch]$Reapply,
@@ -33,6 +34,7 @@ $root = $PSScriptRoot
 . (Join-Path $root 'lib\Core.ps1')
 . (Join-Path $root 'lib\Journal.ps1')
 . (Join-Path $root 'lib\NvidiaPower.ps1')
+. (Join-Path $root 'lib\Hitch.ps1')
 . (Join-Path $root 'lib\Checks.ps1')
 . (Join-Path $root 'lib\Stats.ps1')
 . (Join-Path $root 'lib\Safety.ps1')
@@ -168,6 +170,7 @@ function Show-Menu {
         Write-Host '   7) Undo PC and Controller' -ForegroundColor White
         Write-Host '   8) Compare two frame captures' -ForegroundColor White
         Write-Host '   9) What will change' -ForegroundColor White
+        Write-Host '  10) Name the hitch (watch only, about 20 seconds)' -ForegroundColor White
         Write-Host '   0) Exit' -ForegroundColor White
         Write-Host ''
         $c = Read-Host '  choice'
@@ -186,6 +189,7 @@ function Show-Menu {
             Invoke-OptimizeAction 'Both'
             $script:WhatIfMode = $false
         }
+        elseif ($c -eq '10') { Invoke-KHitchWatch }
         else { continue }
         Write-Host ''
         [void](Read-Host '  Press Enter to return to the menu')
@@ -215,3 +219,4 @@ if ($Action -eq 'Menu') { Show-Menu }
 elseif ($Action -eq 'Optimize') { Invoke-OptimizeAction $Module }
 elseif ($Action -eq 'Verify') { Invoke-VerifyAction $Module }
 elseif ($Action -eq 'Undo') { Invoke-UndoAction $Module }
+elseif ($Action -eq 'Hitch') { Invoke-KHitchWatch }
