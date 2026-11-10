@@ -4,7 +4,7 @@ This build is not signed. Windows SmartScreen will warn you. Choose More info, t
 
 Keep JesusKpekpes.exe in this folder. The pc folder and JesusKpekpesTune.dll have to stay beside it.
 
-Install Equalizer APO yourself. Open the program, press Get the audio programs, and open the Equalizer APO page. HeSuVi, ReaPlugs and VoiceMeeter are listed so you can see them. This program does not turn them on.
+Press Get the audio programs. For Equalizer APO, press Download + open. The file is checked against a pinned SHA-256, and only then is the vendor setup opened for you to click through. A file that does not match is deleted and never opened. ReaPlugs has the same button. HeSuVi, ReaPlugs and VoiceMeeter are not turned on.
 
 Audio tune
 Pick the headphones. Choose Nova Pro only for the Arctis Nova Pro on the small USB adapter. Leave Sonar off, and leave the GameDAC equalizer off. Do not also run Insured Audio or Rara, or they stack. Push Footstep hit to the right. Leave 7.1 off unless Windows shows 8 channels. Press Turn on. Drop and Well are still there and are unchanged.
