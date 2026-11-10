@@ -1,7 +1,7 @@
 namespace JesusKpekpes;
 
 // The text equalizer runs first, at the sample rate it is given.
-// This stage raises only the foot band. A gun is trimmed in its own band, on that ear alone.
+// This stage raises only the foot band, by the same amount in every ear. A gun is trimmed in its own band, on that ear alone.
 public static class TuneEngine
 {
     public static void Run(float[] left, float[] right, int sampleRate) =>
@@ -17,33 +17,63 @@ public static class TuneEngine
         if (ears.Length == 1) Compress(ears[0], sampleRate);
     }
 
-    public static void Compress(float[] ear, int sampleRate)
+    public static void Compress(float[] ear, int sampleRate) => CompressLinked([ear], sampleRate);
+
+    /// <summary>
+    /// The foot band gets one shared lift for all ears, taken from the strongest ear, so the loudness gap between the ears is kept.
+    /// The lift only ever adds level (never below 1) and eases to 1 as the foot band gets loud. The gun trim stays on each ear alone.
+    /// Mirrors plugin/tune.c.
+    /// </summary>
+    public static void CompressLinked(float[][] ears, int sampleRate)
     {
+        var count = ears.Length;
+        if (count == 0) return;
+        var length = ears.Min(e => e.Length);
         var rate = Rate(sampleRate);
         var footAttack = 1f - MathF.Exp(-1f / (rate * 0.008f));
         var footRelease = 1f - MathF.Exp(-1f / (rate * 0.100f));
         var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
         var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.045f));
-        var gun = Bandpass.Open(1400f, 0.6f, rate);
-        var foot = Bandpass.Open(180f, 1.0f, rate);
-        var footEnv = 0f;
-        var gunEnv = 0f;
-        const float ceiling = 0.8912509f;
-        for (var i = 0; i < ear.Length; i++)
+        var gun = new Bandpass[count];
+        var foot = new Bandpass[count];
+        for (var k = 0; k < count; k++)
         {
-            var gunBand = gun.Tick(ear[i]);
-            var footBand = foot.Tick(ear[i]);
-            var other = ear[i] - gunBand - footBand;
-            var footLevel = MathF.Abs(footBand);
-            var gunLevel = MathF.Abs(gunBand);
-            footEnv += (footLevel - footEnv) * (footLevel > footEnv ? footAttack : footRelease);
-            gunEnv += (gunLevel - gunEnv) * (gunLevel > gunEnv ? gunAttack : gunRelease);
-            var footGain = MathF.Pow(10f, (-Reduction(footEnv, -20f, 0.5f) + 6f) / 20f);
-            var gunGain = MathF.Pow(10f, -Reduction(gunEnv, -16f, 2f / 3f) / 20f);
-            var y = other + footBand * footGain + gunBand * gunGain;
-            var mag = MathF.Abs(y);
-            if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
-            ear[i] = y;
+            gun[k] = Bandpass.Open(1400f, 0.6f, rate);
+            foot[k] = Bandpass.Open(180f, 1.0f, rate);
+        }
+        var footEnv = new float[count];
+        var gunEnv = new float[count];
+        var gunBand = new float[count];
+        var footBand = new float[count];
+        var other = new float[count];
+        const float ceiling = 0.8912509f;
+        for (var i = 0; i < length; i++)
+        {
+            var strongest = 0f;
+            for (var k = 0; k < count; k++)
+            {
+                var x = ears[k][i];
+                gunBand[k] = gun[k].Tick(x);
+                footBand[k] = foot[k].Tick(x);
+                other[k] = x - gunBand[k] - footBand[k];
+                var footLevel = MathF.Abs(footBand[k]);
+                var gunLevel = MathF.Abs(gunBand[k]);
+                footEnv[k] += (footLevel - footEnv[k]) * (footLevel > footEnv[k] ? footAttack : footRelease);
+                gunEnv[k] += (gunLevel - gunEnv[k]) * (gunLevel > gunEnv[k] ? gunAttack : gunRelease);
+                if (footEnv[k] < 1e-20f) footEnv[k] = 0f;
+                if (gunEnv[k] < 1e-20f) gunEnv[k] = 0f;
+                if (footEnv[k] > strongest) strongest = footEnv[k];
+            }
+            var liftDb = 6f - Reduction(strongest, -20f, 0.5f);
+            var footGain = liftDb > 0f ? MathF.Pow(10f, liftDb / 20f) : 1f;
+            for (var k = 0; k < count; k++)
+            {
+                var gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
+                var y = other[k] + footBand[k] * footGain + gunBand[k] * gunGain;
+                var mag = MathF.Abs(y);
+                if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
+                ears[k][i] = y;
+            }
         }
     }
 
@@ -77,6 +107,7 @@ public static class TuneEngine
         public float Tick(float x)
         {
             var y = _b0 * x + _b2 * _x2 - _a1 * _y1 - _a2 * _y2;
+            if (MathF.Abs(y) < 1e-20f) y = 0f;
             _x2 = _x1;
             _x1 = x;
             _y2 = _y1;

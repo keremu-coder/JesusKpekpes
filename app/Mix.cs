@@ -116,8 +116,7 @@ static class Mix
                 left[i] = l;
                 right[i] = r;
             }
-            TuneEngine.Compress(left, sr);
-            TuneEngine.Compress(right, sr);
+            TuneEngine.CompressLinked([left, right], sr);
             return;
         }
 
@@ -152,13 +151,7 @@ static class Mix
             if (rearLeft is not null) rearLeft[i] = rl;
             if (rearRight is not null) rearRight[i] = rr;
         }
-        TuneEngine.Compress(left, sr);
-        TuneEngine.Compress(right, sr);
-        if (sideLeft is not null) TuneEngine.Compress(sideLeft, sr);
-        if (sideRight is not null) TuneEngine.Compress(sideRight, sr);
-        if (center is not null) TuneEngine.Compress(center, sr);
-        if (rearLeft is not null) TuneEngine.Compress(rearLeft, sr);
-        if (rearRight is not null) TuneEngine.Compress(rearRight, sr);
+        TuneEngine.CompressLinked(new[] { left, right, sideLeft, sideRight, center, rearLeft, rearRight }.OfType<float[]>().ToArray(), sr);
         const float surroundBed = 0.31622776f;
         for (var i = 0; i < left.Length; i++)
         {
