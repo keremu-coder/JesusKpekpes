@@ -77,6 +77,108 @@ public static class TuneEngine
         }
     }
 
+    /// <summary>
+    /// Nova Pro only. The weight band and the tick band are lifted while they are a hit, by one gain for every ear,
+    /// so the level gap between the ears stays. A steady tone in those bands is not lifted. The rest of the sound,
+    /// including the background, is not given that lift. A gun is still trimmed on the ear that has it.
+    /// </summary>
+    public static void ShapeNova(float[][] ears, int sampleRate, int hit)
+    {
+        var count = ears.Length;
+        if (count == 0) return;
+        var length = ears.Min(e => e.Length);
+        var rate = Rate(sampleRate);
+        var amount = Math.Clamp(hit, 0, 100) / 100f;
+        var maxWeight = 7f * amount;
+        var maxTick = 10f * amount;
+        var fastA = 1f - MathF.Exp(-1f / (rate * 0.0025f));
+        var fastR = 1f - MathF.Exp(-1f / (rate * 0.040f));
+        var slowA = 1f - MathF.Exp(-1f / (rate * 0.080f));
+        var slowR = 1f - MathF.Exp(-1f / (rate * 0.400f));
+        var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
+        var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.045f));
+        var weight = new Bandpass[count];
+        var tick = new Bandpass[count];
+        var gun = new Bandpass[count];
+        for (var k = 0; k < count; k++)
+        {
+            weight[k] = Bandpass.Open(220f, 1.0f, rate);
+            tick[k] = Bandpass.Open(3200f, 1.1f, rate);
+            gun[k] = Bandpass.Open(1400f, 0.7f, rate);
+        }
+        var weightFast = new float[count];
+        var weightSlow = new float[count];
+        var tickFast = new float[count];
+        var tickSlow = new float[count];
+        var gunEnv = new float[count];
+        var weightBand = new float[count];
+        var tickBand = new float[count];
+        var gunBand = new float[count];
+        var other = new float[count];
+        const float ceiling = 0.8912509f;
+        for (var i = 0; i < length; i++)
+        {
+            var bestWeightFast = 0f;
+            var bestWeightRatio = 1f;
+            var bestTickFast = 0f;
+            var bestTickRatio = 1f;
+            for (var k = 0; k < count; k++)
+            {
+                var x = ears[k][i];
+                weightBand[k] = weight[k].Tick(x);
+                tickBand[k] = tick[k].Tick(x);
+                gunBand[k] = gun[k].Tick(x);
+                other[k] = x - weightBand[k] - tickBand[k] - gunBand[k];
+                Follow(ref weightFast[k], MathF.Abs(weightBand[k]), fastA, fastR);
+                Follow(ref weightSlow[k], MathF.Abs(weightBand[k]), slowA, slowR);
+                Follow(ref tickFast[k], MathF.Abs(tickBand[k]), fastA, fastR);
+                Follow(ref tickSlow[k], MathF.Abs(tickBand[k]), slowA, slowR);
+                Follow(ref gunEnv[k], MathF.Abs(gunBand[k]), gunAttack, gunRelease);
+                Consider(weightFast[k], weightSlow[k], ref bestWeightFast, ref bestWeightRatio);
+                Consider(tickFast[k], tickSlow[k], ref bestTickFast, ref bestTickRatio);
+            }
+            var weightGain = TransientGain(bestWeightFast, bestWeightRatio, maxWeight);
+            var tickGain = TransientGain(bestTickFast, bestTickRatio, maxTick);
+            for (var k = 0; k < count; k++)
+            {
+                var gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
+                var y = other[k] + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
+                var mag = MathF.Abs(y);
+                if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
+                ears[k][i] = y;
+            }
+        }
+    }
+
+    static void Follow(ref float env, float level, float attack, float release)
+    {
+        env += (level - env) * (level > env ? attack : release);
+        if (env < 1e-20f) env = 0f;
+    }
+
+    static void Consider(float fast, float slow, ref float bestFast, ref float bestRatio)
+    {
+        if (fast > bestFast) bestFast = fast;
+        var ratio = fast / (slow + 1e-5f);
+        if (ratio > bestRatio) bestRatio = ratio;
+    }
+
+    static float TransientGain(float fast, float ratio, float maxDb)
+    {
+        if (maxDb <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 1f;
+        var novelty = 20f * MathF.Log10(ratio);
+        if (novelty > 18f) novelty = 18f;
+        var edge = novelty / 12f;
+        if (edge > 1f) edge = 1f;
+        var level = 20f * MathF.Log10(fast + 1e-8f);
+        var quiet = (-6f - level) / 26f;
+        if (quiet < 0f) quiet = 0f;
+        if (quiet > 1f) quiet = 1f;
+        var db = maxDb * quiet * edge;
+        if (db <= 0f) return 1f;
+        return MathF.Pow(10f, db / 20f);
+    }
+
     static int Rate(int sampleRate) => sampleRate >= 1000 ? sampleRate : 48000;
 
     static float Reduction(float env, float threshold, float slope)

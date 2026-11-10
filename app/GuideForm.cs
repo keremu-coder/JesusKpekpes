@@ -71,7 +71,7 @@ sealed class GuideForm : Form
         _roomLabel.Visible = false;
         _loud.Scroll += (_, _) => ScheduleSave();
         _room.Scroll += (_, _) => ScheduleSave();
-        _preset.Items.AddRange(new object[] { "Drop", "Well" });
+        _preset.Items.AddRange(new object[] { "Drop", "Well", "Nova Pro" });
         _preset.SelectedIndex = 0;
         _preset.SetBounds(28, 352, 180, 32);
         _seven.Text = "7.1, untested";
@@ -85,7 +85,7 @@ sealed class GuideForm : Form
         _preset.Visible = false;
         _seven.Visible = false;
         _keep.Visible = false;
-        _preset.SelectedIndexChanged += (_, _) => ScheduleSave();
+        _preset.SelectedIndexChanged += (_, _) => { RefreshRoute(); ScheduleSave(); };
         _seven.CheckedChanged += (_, _) => { RefreshRoute(); ScheduleSave(); };
         _save.Tick += (_, _) => { _save.Stop(); if (_on && Selected is not null) TurnOn(); };
 
@@ -186,9 +186,16 @@ sealed class GuideForm : Form
     void RefreshRoute()
     {
         if (_page != 2 || Selected is null) return;
-        _body.Text = _seven.Checked
-            ? "7.1 is untested. The centre and the low speaker are muted after the fold. Leave this off for Warzone."
-            : $"Stereo on {Selected.Name}. The game can stay at 2 channels.";
+        var nova = _preset.SelectedIndex == 2;
+        _seven.Text = nova ? "7.1" : "7.1, untested";
+        if (nova && _seven.Checked)
+            _body.Text = "Nova Pro, 7.1. Left stays left. Centre stays in the middle. A step behind you is quieter than one beside you.";
+        else if (nova)
+            _body.Text = "Nova Pro on the small USB adapter. Sonar off. Push Footstep hit right. A step jumps up. Steady noise does not.";
+        else
+            _body.Text = _seven.Checked
+                ? "7.1 is untested. The centre and the low speaker are muted after the fold. Leave this off for Warzone."
+                : $"Stereo on {Selected.Name}. The game can stay at 2 channels.";
     }
 
     void ScheduleSave()
@@ -201,7 +208,7 @@ sealed class GuideForm : Form
     }
 
     MixPlan Current(string name) => new(
-        _preset.SelectedIndex == 1 ? Preset.Well : Preset.Drop,
+        _preset.SelectedIndex == 2 ? Preset.Nova : _preset.SelectedIndex == 1 ? Preset.Well : Preset.Drop,
         _seven.Checked ? Route.Surround : Route.Stereo,
         _loud.Value,
         _room.Value,
@@ -225,7 +232,9 @@ sealed class GuideForm : Form
         _body.Text = result switch
         {
             WriteResult.On when found.Count > 0 => $"On. {string.Join(", ", found)} stays. Turn this off to use that instead.",
-            WriteResult.On => $"On. Leave the game on {phones.Name}.",
+            WriteResult.On => _preset.SelectedIndex == 2
+                ? "On. Nova Pro. A step jumps up. Steady noise does not. Leave Sonar and the GameDAC EQ off."
+                : $"On. Leave the game on {phones.Name}.",
             WriteResult.NotAttached when found.Count > 0 => $"The file is written. {string.Join(", ", found)} stays. Equalizer APO is not turned on for these headphones yet.",
             WriteResult.NotAttached => "The file is written. Equalizer APO is not turned on for these headphones yet.",
             WriteResult.Conflict => "HeSuVi, Rara, or Peace is already there. Press Turn on again to keep that setup.",
@@ -358,7 +367,7 @@ sealed class GuideForm : Form
             "on=" + (on ? "1" : "0"),
             "hit=" + _loud.Value,
             "quiet=" + _room.Value,
-            "preset=" + (_preset.SelectedIndex == 1 ? "well" : "drop"),
+            "preset=" + (_preset.SelectedIndex == 2 ? "nova" : _preset.SelectedIndex == 1 ? "well" : "drop"),
             "route=" + (_seven.Checked ? "surround" : "stereo"),
             "level=" + Math.Clamp(_level.SelectedIndex, 0, 2),
         ]);
@@ -376,7 +385,7 @@ sealed class GuideForm : Form
         map.TryGetValue("on", out var on);
         if (map.TryGetValue("hit", out var hit) && int.TryParse(hit, out var hitValue)) _loud.Value = Math.Clamp(hitValue, 0, 100);
         if (map.TryGetValue("quiet", out var quiet) && int.TryParse(quiet, out var quietValue)) _room.Value = Math.Clamp(quietValue, 0, 100);
-        if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "well" ? 1 : 0;
+        if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "nova" ? 2 : preset == "well" ? 1 : 0;
         if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
         if (map.TryGetValue("level", out var level) && int.TryParse(level, out var levelValue)) _level.SelectedIndex = Math.Clamp(levelValue, 0, 2);
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
