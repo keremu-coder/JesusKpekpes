@@ -248,4 +248,34 @@ var hotPeak = 0f;
 for (var i = 0; i < gunL.Length; i++) hotPeak = MathF.Max(hotPeak, MathF.Max(MathF.Abs(gunL[i]), MathF.Abs(gunR[i])));
 Check(hotPeak <= 1f, $"the shot clipped at {hotPeak}");
 
+// ---- Linked foot lift: the gap between the ears is kept and nothing is turned down ----
+{
+    const int rate = 48000;
+    double Db(float[] x, int from, int to) { double s = 0; for (var i = from; i < to; i++) s += (double)x[i] * x[i]; return 10 * Math.Log10(s / (to - from) + 1e-20); }
+    foreach (var levelDb in new[] { -35.0, -30.0, -20.0, -12.0, -6.0 })
+    {
+        var aL = (float)(Math.Pow(10, levelDb / 20) * Math.Sqrt(2));
+        var aR = (float)(aL * Math.Pow(10, -15.0 / 20));
+        var left = new float[rate]; var right = new float[rate];
+        var inL = new float[rate]; var inR = new float[rate];
+        for (var i = 0; i < rate; i++)
+        {
+            var wave = MathF.Sin(2 * MathF.PI * 180 * i / rate);
+            inL[i] = left[i] = wave * aL;
+            inR[i] = right[i] = wave * aR;
+        }
+        TuneEngine.CompressLinked([left, right], rate);
+        var gapIn = Db(inL, rate / 2, rate) - Db(inR, rate / 2, rate);
+        var gapOut = Db(left, rate / 2, rate) - Db(right, rate / 2, rate);
+        Check(Math.Abs(gapOut - gapIn) < 0.1, $"{levelDb} dBFS: the gap between the ears must stay {gapIn:0.00}, got {gapOut:0.00}");
+        Check(Db(left, rate / 2, rate) >= Db(inL, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the louder ear must not be turned down");
+        Check(Db(right, rate / 2, rate) >= Db(inR, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the quieter ear must not be turned down");
+        if (levelDb <= -30)
+            Check(Db(left, rate / 2, rate) - Db(inL, rate / 2, rate) > 5.5, $"{levelDb} dBFS: a quiet foot should be lifted by about 6 dB");
+    }
+    var hush = new float[rate];
+    TuneEngine.CompressLinked([hush], rate);
+    Check(hush.All(v => v == 0f), "silence must stay silence");
+}
+
 Console.WriteLine("engine ok");

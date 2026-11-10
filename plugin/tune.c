@@ -1,6 +1,8 @@
 /* Build on Windows, from this folder:
    x86_64-w64-mingw32-gcc -shared -O2 -o JesusKpekpesTune.dll tune.c -lm
    The text file is the equalizer. This plugin raises only the foot band.
+   The foot band is raised by the same amount in every ear, so the loudness difference between the ears is kept.
+   The lift only ever adds level: it eases back to nothing as the foot band gets loud and is never below the input.
    A gun is turned down in its own band, on the ear that fired. The other ear is never touched. */
 #include <math.h>
 #include <stddef.h>
@@ -92,6 +94,7 @@ static void set_band(Stage* stage, float hz, float q, float rate) {
 
 static float tick(Stage* stage, float x) {
     float y = stage->b0 * x + stage->b2 * stage->x2 - stage->a1 * stage->y1 - stage->a2 * stage->y2;
+    if (fabsf(y) < 1e-20f) y = 0.f;
     stage->x2 = stage->x1;
     stage->x1 = x;
     stage->y2 = stage->y1;
@@ -121,35 +124,56 @@ static float reduction(float env, float threshold, float slope) {
     return 0.f;
 }
 
-static float shape(Lane* lane, float x) {
+typedef struct {
+    float gun_band, foot_band, other;
+} Split;
+
+static void split(Lane* lane, float x, Split* out) {
     float gun_band = tick(&lane->gun, x);
     float foot_band = tick(&lane->foot, x);
-    float other = x - gun_band - foot_band;
     float foot_level = fabsf(foot_band);
     float gun_level = fabsf(gun_band);
-    float foot_gain, gun_gain, y, mag;
     lane->foot_env += (foot_level - lane->foot_env) * (foot_level > lane->foot_env ? lane->foot_attack : lane->foot_release);
     lane->gun_env += (gun_level - lane->gun_env) * (gun_level > lane->gun_env ? lane->gun_attack : lane->gun_release);
-    foot_gain = powf(10.f, (-reduction(lane->foot_env, -20.f, 0.5f) + 6.f) / 20.f);
-    gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
-    y = other + foot_band * foot_gain + gun_band * gun_gain;
-    mag = fabsf(y);
+    if (lane->foot_env < 1e-20f) lane->foot_env = 0.f;
+    if (lane->gun_env < 1e-20f) lane->gun_env = 0.f;
+    out->gun_band = gun_band;
+    out->foot_band = foot_band;
+    out->other = x - gun_band - foot_band;
+}
+
+/* Linear gain for the foot band, never below 1. Up to +6 dB for a quiet foot, easing to 1 as the band gets loud. */
+static float lift(float env) {
+    float db = 6.f - reduction(env, -20.f, 0.5f);
+    return db > 0.f ? powf(10.f, db / 20.f) : 1.f;
+}
+
+static float finish(Lane* lane, const Split* part, float foot_gain) {
+    float gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+    float y = part->other + part->foot_band * foot_gain + part->gun_band * gun_gain;
+    float mag = fabsf(y);
     if (mag <= 0.8912509f) return y;
     return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
 }
 
-static void pass(Lane* lane, const float* in, float* out, i32 count) {
-    i32 i;
-    for (i = 0; i < count; i++) out[i] = shape(lane, in[i]);
-}
-
 static void replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
     Bank* bank = effect ? effect->object : 0;
-    i32 ch;
+    Split part[8];
+    i32 i, ch;
     if (!bank || frames < 1 || !inputs || !outputs) return;
-    for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
-        if (!inputs[ch] || !outputs[ch]) continue;
-        pass(&bank->lane[ch], inputs[ch], outputs[ch], frames);
+    for (i = 0; i < frames; i++) {
+        float strongest = 0.f;
+        float foot_gain;
+        for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
+            if (!inputs[ch] || !outputs[ch]) continue;
+            split(&bank->lane[ch], inputs[ch][i], &part[ch]);
+            if (bank->lane[ch].foot_env > strongest) strongest = bank->lane[ch].foot_env;
+        }
+        foot_gain = lift(strongest);
+        for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
+            if (!inputs[ch] || !outputs[ch]) continue;
+            outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain);
+        }
     }
 }
 
@@ -220,6 +244,43 @@ EXPORT Effect* main_plugin(void* host) { return VSTPluginMain(host); }
 
 #ifdef TUNE_CHECK
 #include <stdio.h>
+
+static double rms_db(const float* x, int from, int to) {
+    double sum = 0;
+    int i;
+    for (i = from; i < to; i++) sum += (double)x[i] * x[i];
+    return 10.0 * log10(sum / (to - from) + 1e-20);
+}
+
+/* A foot in one ear, 15 dB quieter in the other. The plugin must keep that gap and must never turn a foot-band tone down. */
+static int check_ears(void) {
+    enum { sr = 48000, n = 48000 };
+    static float l[n], r[n], lin[n], rin[n];
+    static const double levels[] = { -35, -30, -20, -12, -6 };
+    int bad = 0, k, i;
+    for (k = 0; k < 5; k++) {
+        float a_l = powf(10.f, (float)levels[k] / 20.f) * 1.41421356f;
+        float a_r = a_l * powf(10.f, -15.f / 20.f);
+        Effect* e = VSTPluginMain(0);
+        float* in[8] = { l, r };
+        float* out[8] = { l, r };
+        double gap_in, gap_out, l_in, r_in, l_out, r_out;
+        for (i = 0; i < n; i++) {
+            float s = sinf(2.f * 3.14159265f * 180.f * i / sr);
+            lin[i] = l[i] = s * a_l;
+            rin[i] = r[i] = s * a_r;
+        }
+        replace(e, in, out, n);
+        l_in = rms_db(lin, n / 2, n); r_in = rms_db(rin, n / 2, n);
+        l_out = rms_db(l, n / 2, n); r_out = rms_db(r, n / 2, n);
+        gap_in = l_in - r_in; gap_out = l_out - r_out;
+        printf("left %4.0f dBFS: gap in %.2f out %.2f, left %+.2f dB, right %+.2f dB\n", levels[k], gap_in, gap_out, l_out - l_in, r_out - r_in);
+        if (fabs(gap_out - gap_in) > 0.1) bad = 1;
+        if (l_out < l_in - 0.05 || r_out < r_in - 0.05) bad = 1;
+        dispatch(e, OP_CLOSE, 0, 0, 0, 0);
+    }
+    return bad;
+}
 int main(void) {
     enum { sr = 48000, n = 48000 };
     static float left[n], right[n];
@@ -248,6 +309,7 @@ int main(void) {
     }
     printf("quiet_energy %.6f loud_rms %.4f peak %.3f layout %d\n", quiet, sqrt(loud / 2000.0), peak, (int)offsetof(Effect, replace));
     dispatch(effect, OP_CLOSE, 0, 0, 0, 0);
-    return quiet > 0.0008 && peak < 0.98f ? 0 : 1;
+    if (!(quiet > 0.0008 && peak < 0.98f)) return 1;
+    return check_ears();
 }
 #endif
