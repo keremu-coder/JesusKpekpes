@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using JesusKpekpes;
 
 const int sr = 48_000;
@@ -493,6 +494,198 @@ Check(Installer.CanInstall("ReaPlugs") && !Installer.CanInstall("HeSuVi"), "only
             break;
         }
     }
+}
+
+// The C plugin and the C# preview are given the same samples. They have to come out the same.
+{
+    var root = FindTuneRoot();
+    var pipe = Environment.GetEnvironmentVariable("TUNE_PIPE");
+    string? bin = null;
+    if (!string.IsNullOrWhiteSpace(pipe))
+    {
+        Check(File.Exists(pipe), "TUNE_PIPE was set but the C program is not there");
+        bin = File.Exists(pipe) ? pipe : null;
+    }
+    else if (root != null)
+    {
+        bin = CompileTunePipe(root);
+    }
+    Check(bin != null, "the C sound code was not compiled, so it was not compared with C#");
+    if (bin != null)
+    {
+        const int rate = 48000;
+        float[] Tone(int n, float hz, float amp)
+        {
+            var a = new float[n];
+            for (var i = 0; i < n; i++) a[i] = MathF.Sin(2f * MathF.PI * hz * i / rate) * amp;
+            return a;
+        }
+        float[] Step(int n, float hz, float amp)
+        {
+            var a = new float[n];
+            var at = n / 5;
+            var len = (int)(rate * 0.032f);
+            for (var i = 0; i < len && at + i < n; i++)
+            {
+                var env = MathF.Sin(i / (float)len * MathF.PI);
+                a[at + i] = MathF.Sin(2f * MathF.PI * hz * (at + i) / rate) * amp * env;
+            }
+            return a;
+        }
+        float[] Noise(int n, float amp, uint seed)
+        {
+            var a = new float[n];
+            var s = seed;
+            for (var i = 0; i < n; i++)
+            {
+                s = s * 1664525u + 1013904223u;
+                a[i] = (((s >> 8) & 0xFFFFFF) / 16777216f * 2f - 1f) * amp;
+            }
+            return a;
+        }
+        var worst = 0f;
+        var worstName = "";
+        void Same(string name, int mode, float hit, params float[][] ears)
+        {
+            var diff = TuneGap(bin, mode, hit, rate, ears);
+            if (worstName.Length == 0 || diff > worst) { worst = diff; worstName = name; }
+            Check(diff >= 0f && diff < 0.0001f, $"{name}: C and C# differ by {diff}");
+        }
+        var quietRight = Tone(8192, 180f, 0.02f * MathF.Pow(10f, -15f / 20f));
+        Same("classic quiet foot", 0, 1f, Tone(8192, 180f, 0.02f), quietRight);
+        Same("classic loud gun", 0, 1f, Tone(4096, 1400f, 0.95f), Tone(4096, 1000f, 0.95f));
+        Same("classic silence", 0, 1f, new float[256], new float[256]);
+        Same("classic one ear", 0, 1f, Tone(2048, 180f, 0.03f));
+        Same("classic noise", 0, 1f, Noise(4096, 0.08f, 3), Noise(4096, 0.08f, 9));
+        Same("nova step", 1, 1f, Step(16384, 3200f, 0.03f), Step(16384, 220f, 0.01f));
+        Same("nova steady", 1, 1f, Tone(24000, 3200f, 0.03f), Tone(24000, 220f, 0.02f));
+        Same("nova hit down", 1, 0f, Step(8192, 3200f, 0.03f), new float[8192]);
+        Same("nova noise", 1, 0.6f, Noise(8192, 0.05f, 11), Noise(8192, 0.05f, 13));
+        var dryFoot = Tone(8192, 180f, 0.02f);
+        var wetFoot = (float[])dryFoot.Clone();
+        TuneEngine.CompressLinked([wetFoot, (float[])quietRight.Clone()], rate);
+        Check(Energy(wetFoot, 6000, 2000) > Energy(dryFoot, 6000, 2000) * 1.5f, "the compared foot sample was not actually lifted");
+        if (worst < 0.0001f) Console.WriteLine($"C and C# match. Largest sample gap {worst:0.00000000} on {worstName}.");
+    }
+}
+
+static string? FindTuneRoot()
+{
+    foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+    {
+        var dir = new DirectoryInfo(start);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "plugin", "tune.c"))) return dir.FullName;
+            dir = dir.Parent;
+        }
+    }
+    return null;
+}
+
+static string? CompileTunePipe(string root)
+{
+    string? gcc = null;
+    foreach (var name in new[] { "gcc", "cc" })
+    {
+        try
+        {
+            using var probe = Process.Start(new ProcessStartInfo(name, "--version")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            });
+            if (probe == null) continue;
+            probe.WaitForExit(8000);
+            if (probe.ExitCode == 0) { gcc = name; break; }
+        }
+        catch { }
+    }
+    if (gcc == null) return null;
+    var bin = Path.Combine(Path.GetTempPath(), "kpekpes-tunepipe");
+    using var built = new Process();
+    built.StartInfo.FileName = gcc;
+    built.StartInfo.UseShellExecute = false;
+    built.StartInfo.RedirectStandardError = true;
+    built.StartInfo.ArgumentList.Add("-DTUNE_CHECK");
+    built.StartInfo.ArgumentList.Add("-O2");
+    built.StartInfo.ArgumentList.Add("-o");
+    built.StartInfo.ArgumentList.Add(bin);
+    built.StartInfo.ArgumentList.Add(Path.Combine(root, "plugin", "tune.c"));
+    built.StartInfo.ArgumentList.Add("-lm");
+    built.Start();
+    var err = built.StandardError.ReadToEnd();
+    built.WaitForExit();
+    if (built.ExitCode != 0)
+    {
+        Check(false, "the C sound code did not compile: " + err.Trim());
+        return null;
+    }
+    return bin;
+}
+
+static float TuneGap(string bin, int mode, float hit, int rate, float[][] ears)
+{
+    var frames = ears.Min(e => e.Length);
+    var ms = new MemoryStream();
+    using (var w = new BinaryWriter(ms, System.Text.Encoding.ASCII, leaveOpen: true))
+    {
+        w.Write(System.Text.Encoding.ASCII.GetBytes("TNP1"));
+        w.Write(ears.Length);
+        w.Write(frames);
+        w.Write(mode);
+        w.Write(rate);
+        w.Write(hit);
+        foreach (var ear in ears)
+            for (var i = 0; i < frames; i++) w.Write(ear[i]);
+    }
+    using var proc = new Process();
+    proc.StartInfo.FileName = bin;
+    proc.StartInfo.UseShellExecute = false;
+    proc.StartInfo.RedirectStandardInput = true;
+    proc.StartInfo.RedirectStandardOutput = true;
+    proc.StartInfo.RedirectStandardError = true;
+    proc.StartInfo.ArgumentList.Add("pipe");
+    proc.Start();
+    proc.StandardInput.BaseStream.Write(ms.ToArray());
+    proc.StandardInput.Close();
+    var need = ears.Length * frames * sizeof(float);
+    var raw = new byte[need];
+    var got = 0;
+    while (got < need)
+    {
+        var n = proc.StandardOutput.BaseStream.Read(raw, got, need - got);
+        if (n == 0) break;
+        got += n;
+    }
+    var err = proc.StandardError.ReadToEnd();
+    proc.WaitForExit();
+    if (proc.ExitCode != 0 || got != need)
+    {
+        Check(false, "the C sound code did not return samples" + (err.Length == 0 ? "" : ": " + err.Trim()));
+        return -1f;
+    }
+    var copy = ears.Select(e =>
+    {
+        var a = new float[frames];
+        Array.Copy(e, a, frames);
+        return a;
+    }).ToArray();
+    if (mode == 0) TuneEngine.CompressLinked(copy, rate);
+    else TuneEngine.ShapeNova(copy, rate, (int)MathF.Round(hit * 100f));
+    var worst = 0f;
+    for (var c = 0; c < ears.Length; c++)
+    {
+        for (var i = 0; i < frames; i++)
+        {
+            var sample = BitConverter.ToSingle(raw, (c * frames + i) * sizeof(float));
+            var gap = MathF.Abs(sample - copy[c][i]);
+            if (float.IsNaN(gap)) return 1f;
+            if (gap > worst) worst = gap;
+        }
+    }
+    return worst;
 }
 
 Console.WriteLine("engine ok");
