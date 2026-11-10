@@ -20,7 +20,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - run: dotnet run --project tests/EngineTests.csproj
       - name: Build the plugin
         shell: cmd
         run: |
@@ -34,6 +33,11 @@ jobs:
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat"
           cl /nologo /std:c11 /O2 /DTUNE_CHECK /Fe:plugin\tunecheck.exe plugin\tune.c
           plugin\tunecheck.exe
+      - name: Compare the C plugin with the C# preview
+        shell: pwsh
+        run: |
+          $env:TUNE_PIPE = (Resolve-Path plugin\tunecheck.exe).Path
+          dotnet run --project tests/EngineTests.csproj -c Release
       - uses: actions/upload-artifact@v4
         with:
           name: JesusKpekpesTune

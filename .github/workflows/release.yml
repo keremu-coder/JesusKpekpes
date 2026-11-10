@@ -16,8 +16,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Engine tests
-        run: dotnet run --project tests/EngineTests.csproj -c Release
       - name: Build and check the plug-in
         shell: cmd
         run: |
@@ -26,6 +24,11 @@ jobs:
           cl /nologo /LD /O2 /Brepro /Fe:plugin\JesusKpekpesTune.dll plugin\tune.c /link /Brepro
           cl /nologo /std:c11 /O2 /DTUNE_CHECK /Fe:plugin\tunecheck.exe plugin\tune.c
           plugin\tunecheck.exe
+      - name: Compare the C plugin with the C# preview
+        shell: pwsh
+        run: |
+          $env:TUNE_PIPE = (Resolve-Path plugin\tunecheck.exe).Path
+          dotnet run --project tests/EngineTests.csproj -c Release
       - name: Build the controller program
         shell: pwsh
         run: |

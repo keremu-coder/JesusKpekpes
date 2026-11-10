@@ -87,7 +87,8 @@ typedef struct {
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
-    float w = 2.f * 3.14159265f * hz / rate;
+    /* 3.14159274f is the same float the C# preview uses for pi, so the two filters match. */
+    float w = 2.f * 3.14159274f * hz / rate;
     float c = cosf(w);
     float alpha = sinf(w) / (2.f * q);
     float a0 = 1.f + alpha;
@@ -381,6 +382,10 @@ EXPORT Effect* main_plugin(void* host) { return VSTPluginMain(host); }
 
 #ifdef TUNE_CHECK
 #include <stdio.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 static double rms_db(const float* x, int from, int to) {
     double sum = 0;
@@ -481,7 +486,54 @@ static int check_nova(void) {
     return bad;
 }
 
-int main(void) {
+static int read_full(void* dst, size_t bytes) {
+    return fread(dst, 1, bytes, stdin) == bytes;
+}
+
+/* Same samples in, same samples out, so the C# preview can be compared with this file.
+   Header: TNP1, channels, frames, mode (0 classic, 1 nova), rate, hit. Then planar float32. */
+static int pipe_mode(void) {
+    char magic[4];
+    i32 channels = 0, frames = 0, mode = 0, rate = 0, ch;
+    float hit = 1.f;
+    float* block = 0;
+    float* inputs[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    float* outputs[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    Effect* effect;
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    if (!read_full(magic, 4) || memcmp(magic, "TNP1", 4) != 0) return 2;
+    if (!read_full(&channels, 4) || !read_full(&frames, 4) || !read_full(&mode, 4) || !read_full(&rate, 4) || !read_full(&hit, 4)) return 2;
+    if (channels < 1 || channels > 8 || frames < 1 || frames > 96000 || (mode != 0 && mode != 1) || rate < 1000) return 2;
+    block = (float*)malloc((size_t)channels * (size_t)frames * sizeof(float));
+    if (!block || !read_full(block, (size_t)channels * (size_t)frames * sizeof(float))) { free(block); return 2; }
+    effect = VSTPluginMain(0);
+    if (!effect) { free(block); return 2; }
+    dispatch(effect, OP_RATE, 0, 0, 0, (float)rate);
+    if (mode == 1) {
+        effect->set_param(effect, 0, 1.f);
+        effect->set_param(effect, 1, hit);
+    }
+    for (ch = 0; ch < channels; ch++) {
+        inputs[ch] = block + (size_t)ch * (size_t)frames;
+        outputs[ch] = inputs[ch];
+    }
+    replace(effect, inputs, outputs, frames);
+    for (ch = 0; ch < channels; ch++) {
+        if (fwrite(outputs[ch], sizeof(float), (size_t)frames, stdout) != (size_t)frames) {
+            dispatch(effect, OP_CLOSE, 0, 0, 0, 0.f);
+            free(block);
+            return 2;
+        }
+    }
+    dispatch(effect, OP_CLOSE, 0, 0, 0, 0.f);
+    free(block);
+    return 0;
+}
+
+int main(int argc, char** argv) {
     enum { sr = 48000, n = 48000 };
     static float left[n], right[n];
     Effect* effect;
@@ -494,6 +546,7 @@ int main(void) {
     float peak = 0.f;
     _Static_assert(sizeof(void*) == 8, "64-bit");
     _Static_assert(offsetof(Effect, replace) == 120, "host layout");
+    if (argc > 1 && strcmp(argv[1], "pipe") == 0) return pipe_mode();
     effect = VSTPluginMain(0);
     for (i = 0; i < len; i++) {
         float env = sinf((float)i / (float)len * 3.14159265f);
