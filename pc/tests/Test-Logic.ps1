@@ -432,6 +432,132 @@ Assert-That 'the watch uses a private logger' ($hcs.Contains('Kpekpes Hitch') -a
 Assert-That 'the watch does not disable a driver or write the journal' ((-not $hps.Contains('Add-KEntry')) -and -not $hcs.Contains('Add-KEntry') -and -not $hcs.Contains('sc.exe') -and -not $hcs.Contains('net stop'))
 Assert-That 'the menu and the window can start the watch' ($menu.Contains("'Hitch'") -and $menu.Contains('Invoke-KHitchWatch') -and $form.Contains('Name the hitch') -and $form.Contains('-Action Hitch') -and $form.Contains('only watches'))
 
+Write-Host 'Damaged trace bytes (no logger is started)'
+$hitchReady = Initialize-HitchType
+Assert-That 'the trace parser compiles' $hitchReady
+if ($hitchReady) {
+    $us = [int64]0
+    $routine = [uint64]0
+    $ignore = [Kpekpes.KpekpesHitchMath]::ClassifyStall($null, 0, 1000, 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a missing trace payload is ignored' ($ignore -eq 0)
+    $short = [byte[]](1, 2, 3, 4, 5, 6, 7, 8)
+    $shortCode = [Kpekpes.KpekpesHitchMath]::ClassifyStall($short, $short.Length, 1000, 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a short trace payload is ignored' ($shortCode -eq 0)
+    $zero = New-Object byte[] 16
+    $zeroCode = [Kpekpes.KpekpesHitchMath]::ClassifyStall($zero, 16, 1000, 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a zero routine address is ignored' ($zeroCode -eq 0)
+    $good = New-Object byte[] 16
+    [BitConverter]::GetBytes([int64]1000).CopyTo($good, 0)
+    [BitConverter]::GetBytes([int64]0xFFFFF80000000000).CopyTo($good, 8)
+    $goodCode = [Kpekpes.KpekpesHitchMath]::ClassifyStall($good, 16, 1000 + 10000, 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a 1 ms stall with a routine is usable' ($goodCode -eq 1 -and $us -eq 1000 -and $routine -eq [Convert]::ToUInt64('FFFFF80000000000', 16))
+    $backwards = [Kpekpes.KpekpesHitchMath]::ClassifyStall($good, 16, 10, 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a clock that runs backwards is not trusted' ($backwards -eq 2)
+    $huge = [Kpekpes.KpekpesHitchMath]::ClassifyStall($good, 16, 1000 + (10000000L * 4000), 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a stall past the limit is not trusted' ($huge -eq 2)
+    $over = [Kpekpes.KpekpesHitchMath]::ClassifyStall($good, 64, 1000, 10000000, 2000000, [ref]$us, [ref]$routine)
+    Assert-That 'a length past the buffer is ignored' ($over -eq 0)
+    $emptyMap = [Kpekpes.KpekpesHitchMath]::ParseModules($null)
+    Assert-That 'a missing driver list names nothing' ($emptyMap.Names.Length -eq 0)
+    $badCount = New-Object byte[] 8
+    [BitConverter]::GetBytes([int]100001).CopyTo($badCount, 0)
+    $badMap = [Kpekpes.KpekpesHitchMath]::ParseModules($badCount)
+    Assert-That 'an absurd driver count names nothing' ($badMap.Names.Length -eq 0)
+    $cut = New-Object byte[] 20
+    [BitConverter]::GetBytes([int]1).CopyTo($cut, 0)
+    $cutMap = [Kpekpes.KpekpesHitchMath]::ParseModules($cut)
+    Assert-That 'a cut-off driver list names nothing' ($cutMap.Names.Length -eq 0)
+    $stride = 296
+    $blob = New-Object byte[] (8 + $stride)
+    [BitConverter]::GetBytes([int]1).CopyTo($blob, 0)
+    [BitConverter]::GetBytes([int64]4096).CopyTo($blob, 8 + 16)
+    [BitConverter]::GetBytes([int]8192).CopyTo($blob, 8 + 24)
+    $nameBytes = [Text.Encoding]::ASCII.GetBytes('C:\Windows\System32\nvlddmkm.sys')
+    [Array]::Copy($nameBytes, 0, $blob, 8 + 40, $nameBytes.Length)
+    $map = [Kpekpes.KpekpesHitchMath]::ParseModules($blob)
+    Assert-That 'a whole driver path is reduced to the file name' ($map.Names.Length -eq 1 -and $map.Names[0] -eq 'nvlddmkm.sys')
+    Assert-That 'an address inside that driver is named' ($map.Find([uint64]4100) -eq 'nvlddmkm.sys')
+    Assert-That 'an address past that driver is not named' ($map.Find([uint64](4096 + 8192)) -eq '')
+    $rng = [Random]::new(11)
+    $threw = $false
+    for ($n = 0; $n -lt 400; $n++) {
+        $len = $rng.Next(0, 80)
+        $buf = New-Object byte[] $len
+        if ($len -gt 0) { $rng.NextBytes($buf) }
+        try {
+            $code = [Kpekpes.KpekpesHitchMath]::ClassifyStall($buf, $len, $rng.Next(-5, 100000), $rng.Next(-1, 20000000), 2000000, [ref]$us, [ref]$routine)
+            if ($code -ne 0 -and $code -ne 1 -and $code -ne 2) { throw 'bad code' }
+            $null = [Kpekpes.KpekpesHitchMath]::ParseModules($buf)
+        } catch { $threw = $true; break }
+    }
+    Assert-That 'random trace bytes do not throw' (-not $threw)
+    $blank = [Kpekpes.KpekpesHitchMath]::KindOf([guid]::Empty, 0, 0)
+    Assert-That 'an unknown trace event is not a stall' ($blank -eq '')
+}
+
+Write-Host 'Undo when the value was changed after the tool wrote it'
+$driftDir = Join-Path $tmp 'behind'
+New-Item -ItemType Directory -Path $driftDir -Force | Out-Null
+$owned = Join-Path $driftDir 'owned.txt'
+$side = $owned + '.kpekpes-sha256'
+Set-Content -LiteralPath $owned -Value 'tool wrote this' -NoNewline
+Set-Content -LiteralPath $side -Value (Get-FileHash -LiteralPath $owned -Algorithm SHA256).Hash -NoNewline
+Open-KJournal 'owndrift'
+[void](Add-KEntry 'owned|1' @{ Type = 'ownedfile'; Path = $owned; Sidecar = $side })
+Set-Content -LiteralPath $owned -Value 'changed behind undo' -NoNewline
+$script:Quiet = $true
+$kept = Invoke-KRevert 'owndrift'
+$script:Quiet = $false
+Assert-That 'an edited file is kept' ($kept.Ok -and (Get-Content -LiteralPath $owned -Raw) -eq 'changed behind undo')
+Assert-That 'undo says it kept the edit' (($kept.Manual -join ' ') -match [regex]::Escape($owned))
+
+$live = Join-Path $driftDir 'live.txt'
+$bak = Join-Path $driftDir 'live.bak'
+Set-Content -LiteralPath $bak -Value 'original' -NoNewline
+Set-Content -LiteralPath $live -Value 'tool version' -NoNewline
+Open-KJournal 'filedrift'
+[void](Add-KEntry 'file|live' @{ Type = 'filerestore'; Path = $live; Backup = $bak })
+Set-Content -LiteralPath $live -Value 'changed behind undo' -NoNewline
+$script:Quiet = $true
+$back = Invoke-KRevert 'filedrift'
+$script:Quiet = $false
+Assert-That 'a backed-up file returns to the saved original, not the later edit' ($back.Ok -and (Get-Content -LiteralPath $live -Raw) -eq 'original')
+
+$script:FakeReg = @{}
+function Get-RegRaw {
+    param([string]$Path, [string]$Name)
+    $id = $Path + '|' + $Name
+    if ($script:FakeReg.ContainsKey($id)) { return $script:FakeReg[$id] }
+    return [pscustomobject]@{ Existed = $false; Kind = $null; Raw = $null }
+}
+function New-ItemProperty {
+    [CmdletBinding()]
+    param($LiteralPath, $Name, $PropertyType, $Value, [switch]$Force)
+    $script:FakeReg[$LiteralPath + '|' + $Name] = [pscustomobject]@{ Existed = $true; Kind = [string]$PropertyType; Raw = $Value }
+}
+function Remove-ItemProperty {
+    [CmdletBinding()]
+    param($LiteralPath, $Name)
+    [void]$script:FakeReg.Remove($LiteralPath + '|' + $Name)
+}
+$regKey = Join-Path $driftDir 'regkey'
+New-Item -ItemType Directory -Path $regKey -Force | Out-Null
+$script:FakeReg[$regKey + '|MenuShowDelay'] = [pscustomobject]@{ Existed = $true; Kind = 'String'; Raw = '400' }
+Open-KJournal 'regdrift'
+$wrote = Set-KReg -Path $regKey -Name 'MenuShowDelay' -Value '0' -Kind 'String'
+$entry = Get-KEntry ('reg|' + $regKey + '|MenuShowDelay')
+Assert-That 'the setting was journaled before it was written' ($wrote -and $entry.Value -eq '400')
+$script:FakeReg[$regKey + '|MenuShowDelay'] = [pscustomobject]@{ Existed = $true; Kind = 'String'; Raw = '999' }
+$script:Quiet = $true
+$undone = Invoke-KRevert 'regdrift'
+$script:Quiet = $false
+$after = $script:FakeReg[$regKey + '|MenuShowDelay']
+Assert-That 'undo puts the original setting back' ($undone.Ok -and $after.Raw -eq '400')
+Assert-That 'undo names the setting that was changed behind its back' (($undone.Drift -join ' ') -eq ($regKey + '\MenuShowDelay'))
+Remove-Item -LiteralPath function:Get-RegRaw -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath function:New-ItemProperty -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath function:Remove-ItemProperty -ErrorAction SilentlyContinue
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
 Write-Host ('{0} passed, {1} failed' -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })
