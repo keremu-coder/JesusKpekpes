@@ -14,4 +14,8 @@ The Call of Duty settings window sets Reflex to On + boost, and the in-game fram
 
 Name the hitch watches for about 20 seconds while you play, then prints the driver or process behind the longest stall. It does not change a setting, it does not turn that driver off, and a name by itself does not add frames. If Windows will not give the trace, it says so and stops.
 
+Download. The Release workflow builds JesusKpekpes-win-x64.zip. Extract the whole folder and run JesusKpekpes.exe from inside it. The exe is not signed unless a certificate is stored in the repository secrets, and there is no auto-update. An updater on an unsigned Administrator program would be a bad idea. [USING.txt](USING.txt) is the short guide: the buttons, the PC test to copy back, and the Rara comparison. Those two results have to come from your PC. This page cannot invent them. Screenshots have to be taken there too.
+
+The plug-in does not include Steinberg's VST2 SDK. [plugin/NOTICE.txt](plugin/NOTICE.txt) is the finding. Do not sell it as a VST product until a lawyer has looked at it.
+
 Secure Boot stays on.

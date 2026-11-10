@@ -1,0 +1,39 @@
+Jesus Kpekpes
+
+This build is not signed. Windows SmartScreen will warn you. Choose More info, then Run anyway, then Yes when Windows asks for Administrator. There is no auto-update. An updater on an unsigned Administrator program would be a bad idea. When a newer zip is posted, download it and replace this folder.
+
+Keep JesusKpekpes.exe in this folder. The pc folder and JesusKpekpesTune.dll have to stay beside it.
+
+Install Equalizer APO yourself. Open the program, press Get the audio programs, and open the Equalizer APO page. HeSuVi, ReaPlugs and VoiceMeeter are listed so you can see them. This program does not turn them on.
+
+Audio tune
+Pick the headphones. Choose Nova Pro only for the Arctis Nova Pro on the small USB adapter. Leave Sonar off, and leave the GameDAC equalizer off. Do not also run Insured Audio or Rara, or they stack. Push Footstep hit to the right. Leave 7.1 off unless Windows shows 8 channels. Press Turn on. Drop and Well are still there and are unchanged.
+
+Call of Duty settings
+Close the game first. Press Apply. That sets Reflex to On + boost and the in-game cap to one under the monitor. A 200 Hz panel gets 199. Undo puts the original file back.
+
+Optimize the PC
+Press What will change and read it before Optimize PC and controller. Undo is on that same window. Audio is not touched. Name the hitch watches for about 20 seconds and prints a name. It does not change a setting.
+
+Test on your own PC
+Press Check this PC and copy the whole text.
+Press Network check and copy the whole text.
+While the game is open, press Name the hitch and copy the name. If it says the trace was not given, copy that too.
+Those three pastes are the test. A guide cannot invent them.
+
+Compare with Rara
+Use the same clip, the same volume, and the same headset.
+Turn this tune off and leave Rara on. Open Sound check. Press Record 10 seconds while the clip plays.
+Turn Rara off. Open Audio tune, choose the mix, press Turn on. Press Record 10 seconds on the same clip.
+Copy both blocks, including the lines that start with Second minus first.
+Those numbers are the comparison. They are not a lab meter and they are not LUFS. If both runs match almost exactly, the recording missed the tune. Do not treat that as a result.
+
+The plug-in
+plugin/NOTICE.txt is the license finding. The short version: this code does not include Steinberg's SDK, and that is not a Steinberg license. Do not sell it as a VST product until a lawyer has looked at it.
+
+Screenshots
+Take these on your PC after a real run. Do not draw them.
+The home window.
+Audio tune on step 3 with Nova Pro selected.
+Sound check after the two recordings.
+PC tune after Check this PC.
