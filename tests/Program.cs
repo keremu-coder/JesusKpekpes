@@ -420,4 +420,12 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     Check(centreL > 1e-6f, "a centre step must be heard");
 }
 
+Check(Installer.SameHash("AB" + new string('0', 62), "ab" + new string('0', 62)), "hash compare must ignore case");
+Check(!Installer.SameHash("AB" + new string('0', 62), "ac" + new string('0', 62)), "a different hash must not match");
+Check(!Installer.SameHash("", ""), "an empty pin must never match");
+Check(Installer.ApoFileFromRelease("{\"platform_releases\":{\"windows\":{\"filename\":\"/Equalizer APO/1.4/setup.exe\"}}}") == "/Equalizer APO/1.4/setup.exe", "release file name");
+Check(Installer.ApoFileFromRelease("{\"platform_releases\":{}}") is null, "missing windows entry must give null");
+Check(Installer.ApoFileFromRelease("not json") is null, "bad json must give null");
+Check(Installer.CanInstall("ReaPlugs") && !Installer.CanInstall("HeSuVi"), "only APO and ReaPlugs download");
+
 Console.WriteLine("engine ok");

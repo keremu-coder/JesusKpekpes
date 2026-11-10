@@ -12,5 +12,6 @@
     <Compile Include="..\app\Suppress.cs" Link="Suppress.cs" />
     <Compile Include="..\app\LoudnessMath.cs" Link="LoudnessMath.cs" />
     <Compile Include="..\app\CodProfile.cs" Link="CodProfile.cs" />
+      <Compile Include="..\app\Installer.cs" Link="Installer.cs" />
   </ItemGroup>
 </Project>
