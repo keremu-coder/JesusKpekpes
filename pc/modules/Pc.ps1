@@ -773,9 +773,10 @@ public static extern int NtQueryTimerResolution(out uint MinimumResolution, out 
         if ($rp) { [void]$r.Add((New-KResult 'Restore point' 'INFO' $rp.Description 'Safety')) }
     } catch { }
 
-    # NVIDIA per-app power mode: set by hand on purpose
+    # NVIDIA per-app power mode. INFO when it cannot be read; FAIL only when a found game is not Prefer maximum.
     if (Test-HasNvidia) {
-        [void]$r.Add((New-KResult 'NVIDIA power mode for cod.exe' 'INFO' 'manual: NVIDIA Control Panel > Manage 3D settings > Program Settings > cod.exe > Power management mode = Prefer maximum performance' 'NVIDIA'))
+        $nv = Get-NvidiaPowerResult
+        if ($nv) { [void]$r.Add($nv) }
     }
     return @($r)
 }
@@ -850,16 +851,13 @@ function Invoke-PcOptimize {
     if ($Cfg.DefenderExclusions) { if (-not (Invoke-PcDefender)) { [void]$problems.Add('Defender not available') } }
     else { Write-Say '  skipped (config)' 'DarkGray' }
 
+    Write-PcStep 'NVIDIA power for Call of Duty'
+    try { if (-not (Invoke-NvidiaCodPower)) { [void]$problems.Add('NVIDIA power mode') } } catch { [void]$problems.Add('NVIDIA power: ' + $_.Exception.Message) }
+
     if (-not $Reapply) {
         Write-PcStep 'Logon re-apply'
         if ($Cfg.LogonReapply) { if (-not (Register-PcReapplyTask)) { [void]$problems.Add('logon re-apply task') } }
         else { Write-Say '  skipped (config)' 'DarkGray' }
-
-        Write-PcStep 'NVIDIA note'
-        if (Test-HasNvidia) {
-            Write-Say '  Set by hand once (a script cannot read back or undo per-app driver profiles safely):' 'Gray'
-            Write-Say '  NVIDIA Control Panel > Manage 3D settings > Program Settings > add cod.exe > Power management mode = Prefer maximum performance.' 'Gray'
-        } else { Write-Say '  no NVIDIA GPU found' 'DarkGray' }
 
         Write-PcStep 'Score after'
         $afterResults = Get-PcVerifyResults $Cfg

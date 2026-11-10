@@ -73,3 +73,7 @@ To get exactly the old behaviour back, put this in `C:\ProgramData\KpekpesCODCus
 - New `tests/Test-Roundtrip.ps1` (adapters, Defender, tasks, QoS, boot, services, hibernate, shadow storage; Safe and Full scenarios).
 - Simplified `.github/workflows/windows-test.yml`: no patch step, 5 min limit on step 2, 8 min on step 3.
 - Logic tests: 45 -> 113 checks.
+
+## NVIDIA power (journaled)
+
+Prefer maximum performance for Call of Duty is set through NVIDIA's NvAPI, not by editing the driver database. The previous value is stored in the undo journal before it is saved. Undo puts that value back, removes an inherited override, removes an exe this tool added, or deletes a profile this tool created. A predefined NVIDIA profile is never deleted. If NvAPI is missing, nothing is written. `Get-NvidiaUndoKind` is covered by `tests/Test-Logic.ps1`.

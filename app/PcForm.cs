@@ -80,7 +80,8 @@ sealed class PcForm : Form
         - Secure Boot stays on
         - Audio is not changed
 
-        By hand, once: NVIDIA Control Panel, add cod.exe, Power management mode = Prefer maximum performance.
+        - NVIDIA Power management mode = Prefer maximum performance for Call of Duty. Undo puts the old value back.
+        - If NVIDIA's interface is missing, nothing is written. Add cod.exe and set Power management mode to Prefer maximum performance by hand.
         The check can see Resizable BAR from the driver. It cannot flip the BIOS switch.
         """;
 
@@ -157,7 +158,7 @@ sealed class PcForm : Form
             Open(path);
             return;
         }
-        Show("NVIDIA Control Panel was not found. The manual step is still: add cod.exe and set Power management mode to Prefer maximum performance.");
+        Show("NVIDIA Control Panel was not found. Run Optimize to set Prefer maximum performance. If NVIDIA's interface is missing, add cod.exe and set Power management mode to Prefer maximum performance by hand.");
     }
 
     static string Script()

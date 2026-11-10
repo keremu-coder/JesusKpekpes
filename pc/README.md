@@ -89,12 +89,11 @@ There is one profile: maximum. Each group can be switched off in `C:\ProgramData
 - **Logon re-apply:** re-applies the PC tweaks at every logon, since Windows updates can undo them.
   Create an empty file named `PAUSE` in `C:\ProgramData\KpekpesCODCustom` to skip it. By default it leaves your mouse / visual / input choices alone (`ReapplyUserPreferences`: false).
 
-The GPU driver's own registry key is not written to.
+The GPU driver's database file is not written by hand. Prefer maximum performance for Call of Duty is set through NVIDIA's own interface, recorded in the undo journal, and removed by Undo.
 
-### Do this by hand once (NVIDIA)
+### NVIDIA power
 
-NVIDIA Control Panel, Manage 3D settings, Program Settings, add `cod.exe`, **Power management mode = Prefer
-maximum performance**. A script cannot read back or undo per-app driver profiles safely, so this one stays manual.
+Optimize sets **Power management mode = Prefer maximum performance** for `cod.exe`, `cod24.exe`, `cod23.exe` and `ModernWarfare.exe`. The value already on the profile is stored in the journal first. If that value was inherited and is already Prefer maximum, it is left unpinned. Undo puts a profile's own old value back, or removes the override if it was inherited. A profile this tool created is deleted on Undo only when it is not one of NVIDIA's own profiles. If NVIDIA's interface is missing, nothing is written. Set it once by hand: NVIDIA Control Panel, Manage 3D settings, Program Settings, add `cod.exe`, Power management mode = Prefer maximum performance.
 
 ### Honest notes
 
@@ -145,7 +144,7 @@ Settings in `config.json` under `Controller`:
 |---|---|
 | `Run_Kpekpes.bat` | Launcher (asks Windows for admin) |
 | `Kpekpes.ps1` | Menu and command line |
-| `lib\Core.ps1`, `lib\Journal.ps1`, `lib\Checks.ps1` | Config, undo journal, readiness checks, frame comparison |
+| `lib\Core.ps1`, `lib\Journal.ps1`, `lib\Checks.ps1`, `lib\NvidiaPower.ps1` | Config, undo journal, readiness checks, NVIDIA power, frame comparison |
 | `modules\Pc.ps1`, `modules\Controller.ps1` | The two modules |
 | `controller\` | Controller optimizer, launcher templates, default profile |
 | `tests\Test-Logic.ps1` | Tests for the logic that does not need Windows (`pwsh tests/Test-Logic.ps1`) |
