@@ -10,6 +10,7 @@ $env:ProgramData = $tmp
 . (Join-Path $repo 'lib\Core.ps1')
 . (Join-Path $repo 'lib\Journal.ps1')
 . (Join-Path $repo 'lib\NvidiaPower.ps1')
+. (Join-Path $repo 'lib\Hitch.ps1')
 . (Join-Path $repo 'lib\Checks.ps1')
 . (Join-Path $repo 'lib\Stats.ps1')
 . (Join-Path $repo 'lib\Safety.ps1')
@@ -382,6 +383,54 @@ Assert-That 'journal undo knows nvpower' ((Get-Command Invoke-KRevert).ScriptBlo
 $nvcs = Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaPower.cs') -Raw
 Assert-That 'predefined NVIDIA profile is never deleted' ($nvcs.Contains('RefusePredefined') -and $nvcs.Contains('IsPredefined'))
 Assert-That 'NVIDIA driver database file is not written' ((-not $nvcs.Contains('nvdrsdb')) -and -not ((Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaPower.ps1') -Raw).Contains('nvdrsdb')))
+
+Write-Host 'Hitch watch names a stall and changes nothing'
+$none = Get-KHitchLongest @()
+Assert-That 'no stalls means no name' ($null -eq $none)
+$skip = Get-KHitchLongest @(
+    [pscustomobject]@{ Name = ''; Kind = 'DPC'; Us = 99999 },
+    [pscustomobject]@{ Name = '   '; Kind = 'ISR'; Us = 80000 },
+    [pscustomobject]@{ Name = 'zero.sys'; Kind = 'DPC'; Us = 0 },
+    [pscustomobject]@{ Name = 'neg.sys'; Kind = 'DPC'; Us = -5 },
+    [pscustomobject]@{ Name = 'b.sys'; Kind = 'ISR'; Us = 12 }
+)
+Assert-That 'empty names and non-positive times are ignored' ($skip.Name -eq 'b.sys' -and $skip.Kind -eq 'ISR' -and $skip.Us -eq 12)
+$tie = Get-KHitchLongest @(
+    [pscustomobject]@{ Name = 'a.sys'; Kind = 'DPC'; Us = 10 },
+    [pscustomobject]@{ Name = 'b.sys'; Kind = 'ISR'; Us = 10 },
+    [pscustomobject]@{ Name = 'c.sys'; Kind = 'Wake'; Us = 9 }
+)
+Assert-That 'the first of a tie stays' ($tie.Name -eq 'a.sys' -and $tie.Kind -eq 'DPC')
+$longer = Get-KHitchLongest @(
+    [pscustomobject]@{ Name = 'a.sys'; Kind = 'DPC'; Us = 10 },
+    [pscustomobject]@{ Name = 'ndis.sys'; Kind = 'DPC'; Us = 40 }
+)
+Assert-That 'the longer stall wins' ($longer.Name -eq 'ndis.sys' -and $longer.Us -eq 40)
+$win = Format-KHitchReport -Hits @([pscustomobject]@{ Name = 'ntoskrnl.exe'; Kind = 'DPC'; Us = 400 })
+Assert-That 'Windows itself is left alone' ($win.Contains('Leave it.') -and $win.Contains('400 microseconds') -and $win.Contains('Nothing was changed.') -and -not $win.ToLowerInvariant().Contains('fps') -and -not $win.Contains('remove that one driver'))
+$drv = Format-KHitchReport -Hits @(
+    [pscustomobject]@{ Name = 'nvlddmkm.sys'; Kind = 'DPC'; Us = 842 },
+    [pscustomobject]@{ Name = 'dxgkrnl.sys'; Kind = 'ISR'; Us = 120 }
+) -Dropped 3
+Assert-That 'a driver is named and not turned off' ($drv.Contains('nvlddmkm.sys') -and $drv.Contains('delayed call (DPC)') -and $drv.Contains('does not turn it off') -and $drv.Contains('dxgkrnl.sys') -and $drv.Contains('interrupt (ISR)') -and $drv.Contains('dropped some events') -and -not $drv.ToLowerInvariant().Contains('fps'))
+$wake = Format-KHitchReport -Hits @([pscustomobject]@{ Name = 'audiodg.exe'; Kind = 'Wake'; Us = 900 })
+Assert-That 'a thread wake names the process and does not stop it' ($wake.Contains('thread wake') -and $wake.Contains('audiodg.exe') -and $wake.Contains('not a driver') -and $wake.Contains('was not stopped'))
+$err = Format-KHitchReport -Hits $null -ErrorText 'Windows refused the trace because this is not running as Administrator.'
+Assert-That 'a refused trace changes nothing' ($err -eq 'Windows refused the trace because this is not running as Administrator. Nothing was changed.')
+$unnamed = Format-KHitchReport -Hits @() -Seen 4
+Assert-That 'unnamed stalls are not invented' ($unnamed.Contains('none of them named a loaded driver'))
+$bad = Format-KHitchReport -Hits @() -BadTime 2
+Assert-That 'unusable times change nothing' ($bad.Contains('times were not usable'))
+$empty = Format-KHitchReport -Hits @()
+Assert-That 'no trace data changes nothing' ($empty.Contains('no delayed call') -and $empty.Contains('Nothing was changed.'))
+$hcs = Get-Content -LiteralPath (Join-Path $repo 'lib\HitchWatch.cs') -Raw
+$hps = Get-Content -LiteralPath (Join-Path $repo 'lib\Hitch.ps1') -Raw
+$menu = Get-Content -LiteralPath (Join-Path $repo 'Kpekpes.ps1') -Raw
+$rootRepo = Split-Path $repo
+$form = Get-Content -LiteralPath (Join-Path $rootRepo 'app\PcForm.cs') -Raw
+Assert-That 'the watch uses a private logger' ($hcs.Contains('Kpekpes Hitch') -and $hcs.Contains('0x02000000') -and -not $hcs.Contains('NT Kernel Logger'))
+Assert-That 'the watch does not disable a driver or write the journal' ((-not $hps.Contains('Add-KEntry')) -and -not $hcs.Contains('Add-KEntry') -and -not $hcs.Contains('sc.exe') -and -not $hcs.Contains('net stop'))
+Assert-That 'the menu and the window can start the watch' ($menu.Contains("'Hitch'") -and $menu.Contains('Invoke-KHitchWatch') -and $form.Contains('Name the hitch') -and $form.Contains('-Action Hitch') -and $form.Contains('only watches'))
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''

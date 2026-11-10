@@ -22,7 +22,7 @@ sealed class PcForm : Form
             Bounds = new Rectangle(16, 12, 680, 24),
             ForeColor = Color.FromArgb(180, 184, 198),
         };
-        _out.SetBounds(16, 168, 688, 456);
+        _out.SetBounds(16, 200, 688, 424);
         _out.Multiline = true;
         _out.ReadOnly = true;
         _out.ScrollBars = ScrollBars.Vertical;
@@ -45,18 +45,19 @@ sealed class PcForm : Form
         Add("NVIDIA panel", 176, y, OpenNvidia);
         Add("Display settings", 336, y, () => Open("ms-settings:display"));
         Add("Network check", 516, y, () => _ = LoadCheck());
+        Add("Name the hitch", 16, 148, () => _ = Go("-Action Hitch", null, "Play for 20 seconds. This only watches. Nothing is changed."), 220, Color.FromArgb(139, 124, 255));
         Controls.Add(note);
         Controls.Add(_out);
     }
 
-    void Add(string text, int x, int y, Action click, int width = 150)
+    void Add(string text, int x, int y, Action click, int width = 150, Color? back = null)
     {
         var button = new Button
         {
             Text = text,
             Bounds = new Rectangle(x, y, width, 40),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(88, 101, 242),
+            BackColor = back ?? Color.FromArgb(88, 101, 242),
             ForeColor = Color.White,
         };
         button.FlatAppearance.BorderSize = 0;
@@ -83,11 +84,13 @@ sealed class PcForm : Form
         - NVIDIA Power management mode = Prefer maximum performance for Call of Duty. Undo puts the old value back.
         - If NVIDIA's interface is missing, nothing is written. Add cod.exe and set Power management mode to Prefer maximum performance by hand.
         The check can see Resizable BAR from the driver. It cannot flip the BIOS switch.
+
+        Name the hitch only watches for about 20 seconds and prints the driver or process behind the longest stall. It does not change any setting and it does not turn that driver off.
         """;
 
     void Show(string text) => _out.Text = string.IsNullOrWhiteSpace(text) ? "No report came back." : text;
 
-    async Task Go(string args, Func<string, string>? wrap = null)
+    async Task Go(string args, Func<string, string>? wrap = null, string? starting = null)
     {
         if (_busy)
         {
@@ -95,7 +98,7 @@ sealed class PcForm : Form
             return;
         }
         _busy = true;
-        Show("Working. This can take a minute. The window stays usable.");
+        Show(starting ?? "Working. This can take a minute. The window stays usable.");
         try
         {
             var text = await Task.Run(() => Run(args));

@@ -95,6 +95,10 @@ The GPU driver's database file is not written by hand. Prefer maximum performanc
 
 Optimize sets **Power management mode = Prefer maximum performance** for `cod.exe`, `cod24.exe`, `cod23.exe` and `ModernWarfare.exe`. The value already on the profile is stored in the journal first. If that value was inherited and is already Prefer maximum, it is left unpinned. Undo puts a profile's own old value back, or removes the override if it was inherited. A profile this tool created is deleted on Undo only when it is not one of NVIDIA's own profiles. If NVIDIA's interface is missing, nothing is written. Set it once by hand: NVIDIA Control Panel, Manage 3D settings, Program Settings, add `cod.exe`, Power management mode = Prefer maximum performance.
 
+### Hitch watch
+
+Menu option 10, or `-Action Hitch`, watches for about 20 seconds. It prints the driver behind the longest delayed call or interrupt, or the process behind the longest thread wake under 50 ms. It does not write the journal, it does not turn anything off, and it does not use the shared kernel logger, so another watch can keep running. If Windows will not give the trace, it says so and changes nothing. A name does not add frames. If the name is Windows itself (`ntoskrnl.exe`), leave it.
+
 ### Honest notes
 
 - **Some tweaks are applied but give no FPS.** The MMCSS "Games" values, `NetworkThrottlingIndex`,
@@ -144,7 +148,7 @@ Settings in `config.json` under `Controller`:
 |---|---|
 | `Run_Kpekpes.bat` | Launcher (asks Windows for admin) |
 | `Kpekpes.ps1` | Menu and command line |
-| `lib\Core.ps1`, `lib\Journal.ps1`, `lib\Checks.ps1`, `lib\NvidiaPower.ps1` | Config, undo journal, readiness checks, NVIDIA power, frame comparison |
+| `lib\Core.ps1`, `lib\Journal.ps1`, `lib\Checks.ps1`, `lib\NvidiaPower.ps1`, `lib\Hitch.ps1` | Config, undo journal, readiness checks, NVIDIA power, hitch watch, frame comparison |
 | `modules\Pc.ps1`, `modules\Controller.ps1` | The two modules |
 | `controller\` | Controller optimizer, launcher templates, default profile |
 | `tests\Test-Logic.ps1` | Tests for the logic that does not need Windows (`pwsh tests/Test-Logic.ps1`) |
