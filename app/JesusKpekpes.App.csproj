@@ -15,7 +15,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\plugin\JesusKpekpesTune.dll" Condition="Exists('..\plugin\JesusKpekpesTune.dll')" Link="JesusKpekpesTune.dll" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\pc\**\*">
+    <Content Include="..\pc\**\*" Exclude="..\pc\tests\**;..\pc\**\__pycache__\**;..\pc\**\*.pyc">
       <Link>pc\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

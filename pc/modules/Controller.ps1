@@ -1,7 +1,7 @@
 # Controller.ps1 -- DS4Windows controller module.
 #
-# Wraps the proven DS4 optimizer (controller\ds4_optimize_final.py, packaged as the single program
-# KpekpesPCOptimizer.exe by .github\workflows\build-exe.yml; no Python is needed on this PC):
+# Wraps the proven DS4 optimizer (controller\ds4_optimize_final.py, packaged as
+# KpekpesPCOptimizer.exe by the Release workflow; no Python is needed on this PC):
 #   * holds the Windows timer at its finest setting while you play,
 #   * raises DS4Windows to High priority and turns off power throttling for it,
 #   * writes <profile>_tuned.xml with the strafe boost (left stick X only, right stick never touched).
@@ -104,7 +104,7 @@ function Install-Controller {
     $ctl = Join-Path $SourceDir 'controller'
     $exeSrc = Join-Path $ctl $script:CtlExeName
     if (-not (Test-Path -LiteralPath $exeSrc)) {
-        $res.Message = ($script:CtlExeName + ' is missing from the controller folder. Download the "Kpekpes-full-package" (or the exe) from the build-exe run on GitHub Actions and put the exe in ' + $ctl + ' , then run again.')
+        $res.Message = ($script:CtlExeName + ' is missing from the controller folder. The Release zip includes it. A source clone does not, until that workflow has built it.')
         return $res
     }
     Write-Say ('  found: ' + $exeSrc + '  (SHA-256 ' + (Get-FileSha256 $exeSrc) + ')') 'Green'

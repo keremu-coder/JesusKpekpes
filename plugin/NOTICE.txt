@@ -1,0 +1,7 @@
+JesusKpekpesTune is not a Steinberg product.
+
+tune.c does not contain the VST2 SDK, aeffect.h, or any other Steinberg source. It speaks the plug-in layout Equalizer APO already uses, so that host can load the dll. The export name VSTPluginMain is what that host looks for.
+
+VST is a trademark of Steinberg Media Technologies GmbH. Steinberg stopped offering new VST2 SDK licenses. The MIT license in this repository is the license for this code. It is not a license from Steinberg, and it does not grant the right to use their trademark.
+
+Do not sell this dll, or a product built around it, as a VST plug-in until a lawyer has said that the clean-room layout and the name are acceptable. Nothing in this file is that opinion.

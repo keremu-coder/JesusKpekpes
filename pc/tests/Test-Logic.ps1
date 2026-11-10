@@ -161,7 +161,7 @@ $restored = [IO.File]::ReadAllBytes($prof)
 Assert-That 'file is byte-identical after set + restore' (([BitConverter]::ToString($orig)) -eq ([BitConverter]::ToString($restored)))
 Assert-That 'missing tag returns false (no crash)' (-not (Set-XmlTagText $prof 'NoSuchTag' 'x'))
 
-Write-Host 'Bundled profile and tuned copy (tests the optimizer source module; Python exists on the CI runner only, the built exe is smoke-tested in build-exe.yml)'
+Write-Host 'Bundled profile and tuned copy (tests the optimizer source module; Python exists on the CI runner only, the built exe is produced by the Release workflow)'
 $py = $null
 foreach ($n in @('python3', 'python')) { if (-not $py -and (Get-Command $n -ErrorAction SilentlyContinue)) { $py = $n } }
 # Runs a python helper with a hard time limit. Returns @{ ExitCode; Output; TimedOut }.
