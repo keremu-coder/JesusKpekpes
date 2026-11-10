@@ -73,7 +73,7 @@ sealed class ProgramsForm : Form
             var open = new Button
             {
                 Text = "Open page",
-                Bounds = new Rectangle(360, y, 140, 36),
+                Bounds = new Rectangle(360, y, 140, 30),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(88, 101, 242),
                 ForeColor = Color.White,
@@ -81,6 +81,27 @@ sealed class ProgramsForm : Form
             open.FlatAppearance.BorderSize = 0;
             open.Click += (_, _) => AudioKit.Open(row);
             Controls.Add(open);
+            if (Installer.CanInstall(row.Name))
+            {
+                var get = new Button
+                {
+                    Text = "Download + open",
+                    Bounds = new Rectangle(360, y + 32, 140, 30),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(40, 120, 80),
+                    ForeColor = Color.White,
+                };
+                get.FlatAppearance.BorderSize = 0;
+                get.Click += async (_, _) =>
+                {
+                    get.Enabled = false;
+                    _status.Text = "Downloading " + row.Name + " and checking it...";
+                    var message = await Installer.Fetch(row.Name);
+                    _status.Text = message;
+                    get.Enabled = true;
+                };
+                Controls.Add(get);
+            }
             y += 72;
         }
         var again = new Button
@@ -100,7 +121,7 @@ sealed class ProgramsForm : Form
     void RefreshStatus()
     {
         var lines = new System.Text.StringBuilder();
-        lines.AppendLine("Install what is missing, then press Check again. We do not run the installers.");
+        lines.AppendLine("Install what is missing, then press Check again. Download + open checks the file first, then opens the vendor setup for you to click through.");
         var labels = Controls.OfType<Label>().Where(l => l != _status).ToList();
         foreach (var label in labels) Controls.Remove(label);
         var y = 96;
