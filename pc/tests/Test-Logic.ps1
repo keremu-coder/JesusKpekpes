@@ -9,6 +9,7 @@ $env:ProgramData = $tmp
 
 . (Join-Path $repo 'lib\Core.ps1')
 . (Join-Path $repo 'lib\Journal.ps1')
+. (Join-Path $repo 'lib\NvidiaPower.ps1')
 . (Join-Path $repo 'lib\Checks.ps1')
 . (Join-Path $repo 'lib\Stats.ps1')
 . (Join-Path $repo 'lib\Safety.ps1')
@@ -370,6 +371,17 @@ Assert-That 'a later full undo finishes the rest' ($g2.Ok -and $g2.Restored -eq 
 Assert-That 'reg entries record what was written (drift check)' ((Get-Command Set-KReg).ScriptBlock.ToString() -match 'Wrote = ' -and (Get-Command Restore-RegEntry).ScriptBlock.ToString() -match 'Test-KRegDrift')
 Assert-That 'Protect-KDir takes ownership before setting permissions' ((Get-Command Protect-KDir).ScriptBlock.ToString() -match "/setowner '\*S-1-5-32-544'")
 Assert-That 'Defender exclusions go through the elevation-safety check' ((Get-Command Get-PcDefenderWanted).ScriptBlock.ToString() -match 'Test-KPathSafeForElevation')
+
+Write-Host 'NVIDIA power undo choice'
+Assert-That 'undo kind: profile we created is deleted' ((Get-NvidiaUndoKind $true $false) -eq 'delete-profile')
+Assert-That 'undo kind: creating the profile wins over a saved value' ((Get-NvidiaUndoKind $true $true) -eq 'delete-profile')
+Assert-That 'undo kind: an exe we added is removed' ((Get-NvidiaUndoKind $false $false $true) -eq 'delete-app')
+Assert-That 'undo kind: a value the profile already had is restored' ((Get-NvidiaUndoKind -Created $false -HadOwn $true) -eq 'restore-value')
+Assert-That 'undo kind: an inherited value is removed, not pinned' ((Get-NvidiaUndoKind $false $false) -eq 'delete-setting')
+Assert-That 'journal undo knows nvpower' ((Get-Command Invoke-KRevert).ScriptBlock.ToString() -match "eq 'nvpower'" -and (Get-Command Restore-NvidiaPowerEntry).ScriptBlock.ToString() -match 'Get-NvidiaUndoKind')
+$nvcs = Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaPower.cs') -Raw
+Assert-That 'predefined NVIDIA profile is never deleted' ($nvcs.Contains('RefusePredefined') -and $nvcs.Contains('IsPredefined'))
+Assert-That 'NVIDIA driver database file is not written' ((-not $nvcs.Contains('nvdrsdb')) -and -not ((Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaPower.ps1') -Raw).Contains('nvdrsdb')))
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''

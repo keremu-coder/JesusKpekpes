@@ -631,6 +631,7 @@ function Invoke-KRevert {
             }
             elseif ($t -eq 'xmltext') { $ok = Restore-XmlTextEntry $e }
             elseif ($t -eq 'filerestore') { $ok = Restore-FileBackupEntry $e }
+            elseif ($t -eq 'nvpower') { $ok = Restore-NvidiaPowerEntry $e }
             elseif ($t -eq 'appx') { [void]$manual.Add([string]$e.Label) }
             else { Write-KLog ('unknown journal entry type: ' + $t) 'WARN' }
         } catch { $ok = $false; Write-KLog ('revert error ' + $e.Id + ' : ' + $_.Exception.Message) 'WARN' }

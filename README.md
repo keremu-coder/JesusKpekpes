@@ -8,6 +8,6 @@ Get the audio programs opens the official pages for Equalizer APO, HeSuVi, ReaPl
 
 PC tune. What will change lists the PC and controller settings before anything is written. Optimize does not touch audio. Undo puts those PC settings back and leaves audio alone.
 
-Check this PC reads Secure Boot, Resizable BAR, RAM speed and the Call of Duty config path. It does not write the game file. NVIDIA power management for cod.exe stays a manual step: Prefer maximum performance. The check can see Resizable BAR. It cannot change the BIOS.
+Check this PC reads Secure Boot, Resizable BAR, RAM speed and the Call of Duty config path. It does not write the game file. Optimize sets NVIDIA Power management mode to Prefer maximum performance for Call of Duty, and Undo puts the previous value back. If NVIDIA's interface is missing, nothing is written and the check tells you to set it by hand. The check can see Resizable BAR. It cannot change the BIOS.
 
 Secure Boot stays on.
