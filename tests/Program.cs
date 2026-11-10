@@ -428,4 +428,71 @@ Check(Installer.ApoFileFromRelease("{\"platform_releases\":{}}") is null, "missi
 Check(Installer.ApoFileFromRelease("not json") is null, "bad json must give null");
 Check(Installer.CanInstall("ReaPlugs") && !Installer.CanInstall("HeSuVi"), "only APO and ReaPlugs download");
 
+// Damaged Call of Duty options files. The parser may only change a real "Key@index = value" line.
+{
+    CodPlan Feed(string text) => CodProfile.Plan(text, CodProfile.Chosen(false, 200));
+    var junk = new[]
+    {
+        "",
+        "\n\n",
+        "// only a comment\n",
+        "this is not an options file",
+        "NvidiaReflex = Enabled\n",
+        "NvidiaReflex@ = Enabled\n",
+        "@0;1 = Enabled\n",
+        "NvidiaReflex@0 = Enabled\n",
+        " =  = \n",
+        new string('A', 20000) + "\n",
+        "NvidiaReflex@0;1;2 = Enabled\0boost\n",
+        "// NvidiaReflex@0;1;2 = false\nCapFps@0;1;2 = false\n",
+    };
+    foreach (var sample in junk)
+    {
+        try
+        {
+            var plan = Feed(sample);
+            var body = plan.NewText;
+            Check(body != null, "a damaged options file must still return text");
+            Check(body != null && !body.Contains("MaxFpsInGame@0"), "a missing cap line must not be invented");
+        }
+        catch (Exception ex)
+        {
+            Check(false, "damaged options file threw " + ex.GetType().Name);
+        }
+    }
+    var mixed = "// keep me\nNvidiaReflex@0;33761;11445 = Enabled // note\nNOT A LINE\nCapFps@0;1;2 = false\n";
+    var mixedPlan = Feed(mixed);
+    Check(mixedPlan.NewText.StartsWith("// keep me\n"), "a comment above a real line stays");
+    Check(mixedPlan.NewText.Contains("NOT A LINE\n"), "a damaged line between real lines stays");
+    Check(mixedPlan.NewText.Contains("= Enabled + boost // note"), "a real reflex line still updates beside damage");
+    Check(mixedPlan.NewText.Contains("CapFps@0;1;2 = true"), "a real cap line still updates beside damage");
+    var twice = "NvidiaReflex@0;1;2 = Enabled\nNvidiaReflex@0;9;9 = Enabled\n";
+    var twicePlan = Feed(twice);
+    Check(twicePlan.NewText.StartsWith("NvidiaReflex@0;1;2 = Enabled + boost\n"), "the first copy of a key is the one that changes");
+    Check(twicePlan.NewText.EndsWith("NvidiaReflex@0;9;9 = Enabled\n"), "a second copy of the same key is left alone");
+    var random = new Random(7);
+    for (var n = 0; n < 200; n++)
+    {
+        var len = random.Next(0, 300);
+        var chars = new char[len];
+        for (var i = 0; i < len; i++) chars[i] = (char)random.Next(32, 64);
+        var planted = n % 5 == 0;
+        var noise = new string(chars);
+        if (planted) noise += "\nNvidiaReflex@0;4;4 = Enabled // x\n";
+        try
+        {
+            var plan = Feed(noise);
+            if (planted)
+                Check(plan.NewText.Contains("= Enabled + boost // x"), "a real line inside random text still updates");
+            else
+                Check(plan.Changes.Count == 0, "random text with no real line must not be rewritten");
+        }
+        catch (Exception ex)
+        {
+            Check(false, "random options text threw " + ex.GetType().Name);
+            break;
+        }
+    }
+}
+
 Console.WriteLine("engine ok");
