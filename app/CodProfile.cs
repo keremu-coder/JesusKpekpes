@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace JesusKpekpes;
@@ -12,7 +14,8 @@ sealed record CodPlan(string NewText, List<CodChange> Changes, int Unchanged, Li
 /// <summary>
 /// Applies a short, hand-picked list of portable settings to the Call of Duty options file.
 /// Only the value after "=" changes. The key, the numbers after the @, and the comment stay as the game wrote them.
-/// Nothing hardware-specific is touched: devices, monitor, GPU, driver, resolution, refresh rate, frame caps.
+/// Resolution, the Windows refresh rate, devices, and DLSS are not touched.
+/// The in-game cap is set to one under the primary monitor when that rate can be read.
 /// </summary>
 static class CodProfile
 {
@@ -25,7 +28,7 @@ static class CodProfile
         new("EffectsVolume", "0", "1.000000", "Effects at full"),
         new("HitMarkersVolume", "0", "1.000000", "Hit sound at full"),
         new("Volume", "0", "1.000000", "Game volume at full, set the headphones volume instead"),
-        new("NvidiaReflex", "0", "Enabled", "Lower input delay on NVIDIA cards"),
+        new("NvidiaReflex", "0", "Enabled + boost", "On + boost. Keeps the GPU clocks up when a scene is easy"),
         new("VSync", "0", "disabled", "No sync delay"),
         new("VSyncInMenu", "0", "disabled", "No sync delay in menus"),
         new("MotionBlur", "0", "Off", "Clearer picture while moving"),
@@ -63,12 +66,34 @@ static class CodProfile
         new("BulletImpacts", "0", "false", "No impact marks. Fewer frames lost, less feedback"),
     ];
 
-    public const string NotTouched =
-        "Not touched: audio devices, microphone, monitor, GPU name, driver versions, resolution, refresh rate, frame caps, DLSS, AMD and Intel options, window position.";
+    public static string LeftAlone(int refreshHz)
+    {
+        var cap = CapUnderRefresh(refreshHz);
+        var tail = cap > 0
+            ? " In-game cap: " + cap.ToString(CultureInfo.InvariantCulture) + " on a " + refreshHz.ToString(CultureInfo.InvariantCulture) + " Hz panel."
+            : " The frame cap was left as it is, because the monitor rate could not be read.";
+        return "Not touched: audio devices, microphone, monitor choice, GPU name, driver versions, resolution, refresh rate, DLSS, AMD and Intel options, window position." + tail;
+    }
+
+    /// <summary>One under the panel. 200 Hz becomes 199, so a frame is not held on the ceiling. 0 means do not write a cap.</summary>
+    public static int CapUnderRefresh(int hz) => hz >= 60 && hz <= 1000 ? hz - 1 : 0;
 
     static readonly string[] GameNames = ["cod", "BlackOps7", "BlackOps6", "BlackOpsColdWar", "ModernWarfare"];
 
-    public static CodSetting[] Chosen(bool lowest) => lowest ? [.. Core, .. Lowest] : Core;
+    public static CodSetting[] Chosen(bool lowest, int refreshHz = 0)
+    {
+        var list = new List<CodSetting>(Core.Length + (lowest ? Lowest.Length : 0) + 2);
+        list.AddRange(Core);
+        if (lowest) list.AddRange(Lowest);
+        var cap = CapUnderRefresh(refreshHz);
+        if (cap > 0)
+        {
+            list.Add(new("CapFps", "0", "true", "The frame cap does nothing while this is off"));
+            list.Add(new("MaxFpsInGame", "0", cap.ToString(CultureInfo.InvariantCulture),
+                cap.ToString(CultureInfo.InvariantCulture) + " on a " + refreshHz.ToString(CultureInfo.InvariantCulture) + " Hz panel. One under the ceiling."));
+        }
+        return list.ToArray();
+    }
 
     public static CodPlan Plan(string text, IEnumerable<CodSetting> settings)
     {
@@ -157,5 +182,55 @@ static class CodProfile
         if (!File.Exists(backup)) return false;
         File.Copy(backup, file, true);
         return true;
+    }
+
+    /// <summary>Current refresh of the primary display. 0 if Windows does not say.</summary>
+    public static int PrimaryRefreshHz()
+    {
+        try
+        {
+            var mode = new DevMode();
+            mode.dmDeviceName = new string('\0', 32);
+            mode.dmFormName = new string('\0', 32);
+            mode.dmSize = (short)Marshal.SizeOf(typeof(DevMode));
+            if (!EnumDisplaySettings(null, -1, ref mode)) return 0;
+            return CapUnderRefresh(mode.dmDisplayFrequency) > 0 ? mode.dmDisplayFrequency : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    static extern bool EnumDisplaySettings(string? deviceName, int modeNum, ref DevMode devMode);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    struct DevMode
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmDeviceName;
+        public short dmSpecVersion;
+        public short dmDriverVersion;
+        public short dmSize;
+        public short dmDriverExtra;
+        public int dmFields;
+        public int dmPositionX;
+        public int dmPositionY;
+        public int dmDisplayOrientation;
+        public int dmDisplayFixedOutput;
+        public short dmColor;
+        public short dmDuplex;
+        public short dmYResolution;
+        public short dmTTOption;
+        public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmFormName;
+        public short dmLogPixels;
+        public int dmBitsPerPel;
+        public int dmPelsWidth;
+        public int dmPelsHeight;
+        public int dmDisplayFlags;
+        public int dmDisplayFrequency;
     }
 }

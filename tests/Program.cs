@@ -248,6 +248,23 @@ var hotPeak = 0f;
 for (var i = 0; i < gunL.Length; i++) hotPeak = MathF.Max(hotPeak, MathF.Max(MathF.Abs(gunL[i]), MathF.Abs(gunR[i])));
 Check(hotPeak <= 1f, $"the shot clipped at {hotPeak}");
 
+Check(CodProfile.CapUnderRefresh(200) == 199, "200 Hz caps at 199, not on the ceiling");
+Check(CodProfile.CapUnderRefresh(144) == 143, "144 Hz caps at 143");
+Check(CodProfile.CapUnderRefresh(0) == 0, "an unknown rate must not invent a cap");
+Check(CodProfile.CapUnderRefresh(30) == 0, "a rate under 60 is not used");
+var gameFile = "NvidiaReflex@0;33761;11445 = Enabled // one of Disabled, Enabled, Enabled + boost\n"
+    + "CapFps@0;57752;20945 = false\n"
+    + "MaxFpsInGame@0;13305;58861 = 0 // 30 to 300\n"
+    + "ResolutionMultiplier@0;64786;30730 = 100 // 0 to 200\n";
+var capped = CodProfile.Plan(gameFile, CodProfile.Chosen(false, 200));
+Check(capped.NewText.Contains("= Enabled + boost //"), "reflex becomes on + boost and keeps the game's comment");
+Check(capped.NewText.Contains("CapFps@0;57752;20945 = true"), "the cap switch is turned on");
+Check(capped.NewText.Contains("MaxFpsInGame@0;13305;58861 = 199 //"), "200 Hz writes 199");
+Check(capped.NewText.Contains("ResolutionMultiplier@0;64786;30730 = 100"), "render scale is not changed with the cap");
+var open = CodProfile.Plan(gameFile, CodProfile.Chosen(false, 0));
+Check(open.NewText.Contains("MaxFpsInGame@0;13305;58861 = 0"), "no monitor rate leaves the cap number");
+Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the rate is unknown");
+
 // ---- Linked foot lift: the gap between the ears is kept and nothing is turned down ----
 {
     const int rate = 48000;
