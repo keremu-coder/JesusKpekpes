@@ -10,4 +10,6 @@ PC tune. What will change lists the PC and controller settings before anything i
 
 Check this PC reads Secure Boot, Resizable BAR, RAM speed and the Call of Duty config path. It does not write the game file. Optimize sets NVIDIA Power management mode to Prefer maximum performance for Call of Duty, and Undo puts the previous value back. If NVIDIA's interface is missing, nothing is written and the check tells you to set it by hand. The check can see Resizable BAR. It cannot change the BIOS.
 
+The Call of Duty settings window sets Reflex to On + boost, and the in-game frame cap to one under the primary monitor. A 200 Hz panel gets 199. Resolution, the Windows refresh rate, and DLSS stay as they are. Close the game first. Undo puts the original file back.
+
 Secure Boot stays on.

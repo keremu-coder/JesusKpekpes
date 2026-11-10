@@ -59,10 +59,11 @@ sealed class CodForm : Form
             _out.Text = "No Call of Duty options file was found in Documents\\Call of Duty\\players.\r\nStart the game once, close it, and try again. Nothing was changed.";
             return;
         }
+        var hz = CodProfile.PrimaryRefreshHz();
         var text = new System.Text.StringBuilder("What will change. Nothing has been written yet.\r\n\r\n");
         foreach (var file in files)
-            text.AppendLine(CodProfile.Describe(file, CodProfile.Plan(CodProfile.Read(file), CodProfile.Chosen(false))));
-        text.AppendLine(CodProfile.NotTouched);
+            text.AppendLine(CodProfile.Describe(file, CodProfile.Plan(CodProfile.Read(file), CodProfile.Chosen(false, hz))));
+        text.AppendLine(CodProfile.LeftAlone(hz));
         text.AppendLine();
         text.AppendLine("Optional, asked when you press Apply: lowest visuals (render scale 50%, no bullet impacts).");
         _out.Text = text.ToString();
@@ -80,12 +81,13 @@ sealed class CodForm : Form
         var lowest = MessageBox.Show(this,
             "Also use the lowest-visuals options? Render scale 50% and no bullet impacts. More frames, a much softer picture.",
             "Lowest visuals", MessageBoxButtons.YesNo) == DialogResult.Yes;
+        var hz = CodProfile.PrimaryRefreshHz();
         var report = new System.Text.StringBuilder();
         foreach (var file in files)
         {
             try
             {
-                var plan = CodProfile.Plan(CodProfile.Read(file), CodProfile.Chosen(lowest));
+                var plan = CodProfile.Plan(CodProfile.Read(file), CodProfile.Chosen(lowest, hz));
                 if (plan.Changes.Count > 0) CodProfile.Write(file, plan.NewText);
                 report.AppendLine(CodProfile.Describe(file, plan));
             }

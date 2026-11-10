@@ -77,3 +77,7 @@ To get exactly the old behaviour back, put this in `C:\ProgramData\KpekpesCODCus
 ## NVIDIA power (journaled)
 
 Prefer maximum performance for Call of Duty is set through NVIDIA's NvAPI, not by editing the driver database. The previous value is stored in the undo journal before it is saved. Undo puts that value back, removes an inherited override, removes an exe this tool added, or deletes a profile this tool created. A predefined NVIDIA profile is never deleted. If NvAPI is missing, nothing is written. `Get-NvidiaUndoKind` is covered by `tests/Test-Logic.ps1`.
+
+## Reflex and the in-game cap
+
+The game file sets `NvidiaReflex` to `Enabled + boost`. `CapFps` is turned on and `MaxFpsInGame` is set to one under the primary monitor (200 Hz becomes 199). The Windows refresh rate is not changed. If the rate cannot be read, the cap is left alone. Undo still restores the original file.
