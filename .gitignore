@@ -4,4 +4,7 @@ obj/
 .vs/
 setup/payload.zip
 setup-out/
+__pycache__/
+*.pyc
+
 
