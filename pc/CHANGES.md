@@ -80,7 +80,19 @@ Prefer maximum performance for Call of Duty is set through NVIDIA's NvAPI, not b
 
 ## Reflex and the in-game cap
 
-The game file sets `NvidiaReflex` to `Enabled + boost`. `CapFps` is turned on and `MaxFpsInGame` is set to one under the primary monitor (200 Hz becomes 199). The Windows refresh rate is not changed. If the rate cannot be read, the cap is left alone. Undo still restores the original file.
+The game file sets `NvidiaReflex` to `Enabled + boost`. `CapFps` is turned on and `MaxFpsInGame` is set to one under the primary monitor (200 Hz becomes 199). The game file does not change the Windows refresh rate. If the rate cannot be read, the cap is left alone. Undo still restores the original file.
+
+## Monitor rate
+
+Optimize, and Monitor and frames, raise a monitor only to a refresh rate Windows already lists at the current resolution. 60 Hz on a panel that lists 200 Hz at that resolution becomes 200. A higher rate that exists only at another resolution is reported and not applied. The original mode is journaled first. Undo puts that mode back, and names the monitor if the rate was changed again afterwards. `Select-KRefreshHz` is covered by `tests/Test-Logic.ps1`.
+
+## Measured frames
+
+Record before and Record after run the pinned PresentMon 2.6.0 build for 60 seconds against the named exe. Average FPS, 1% low and 0.1% low are `Get-FrameStats` on the displayed-frame column. If the file is missing, the hash does not match, or there are fewer than 100 frames, the window says nothing was measured. It does not print a zero.
+
+## Startup menu
+
+Startup menu lists the Run keys and the Startup folders. Turning one off writes the Windows startup-approved flag. The program is not deleted. SecurityHealth, Windows Defender and this program are refused. Undo restores the original flag.
 
 ## Hitch watch
 

@@ -1,8 +1,8 @@
 Jesus Kpekpes
 
-This build is not signed. Windows SmartScreen will warn you. Choose More info, then Run anyway, then Yes when Windows asks for Administrator. There is no auto-update. An updater on an unsigned Administrator program would be a bad idea. When a newer zip is posted, download it and replace this folder.
+This build is not signed. Windows SmartScreen will warn you. Choose More info, then Run anyway, then Yes when Windows asks for Administrator. There is no auto-update. An updater on an unsigned Administrator program would be a bad idea.
 
-Keep JesusKpekpes.exe in this folder. The pc folder and JesusKpekpesTune.dll have to stay beside it.
+Run JesusKpekpes-Setup.exe to install. It appears in the Start menu and in Windows Settings, Apps. Uninstall there puts the PC changes back and leaves audio as it is. Or extract the zip and run JesusKpekpes.exe from inside it. Keep the pc folder and JesusKpekpesTune.dll beside the exe.
 
 Press Get the audio programs. For Equalizer APO, press Download + open. The file is checked against a pinned SHA-256, and only then is the vendor setup opened for you to click through. A file that does not match is deleted and never opened. ReaPlugs has the same button. HeSuVi, ReaPlugs and VoiceMeeter are not turned on.
 
@@ -13,7 +13,13 @@ Call of Duty settings
 Close the game first. Press Apply. That sets Reflex to On + boost and the in-game cap to one under the monitor. A 200 Hz panel gets 199. Undo puts the original file back.
 
 Optimize the PC
-Press What will change and read it before Optimize PC and controller. Undo is on that same window. Audio is not touched. Name the hitch watches for about 20 seconds and prints a name. It does not change a setting.
+Press What will change and read it before Optimize PC and controller. If the monitor is below the highest rate Windows already lists at this resolution, Optimize raises it. Undo is on that same window. Audio is not touched. Name the hitch watches for about 20 seconds and prints a name. It does not change a setting.
+
+Monitor and frames
+Start the game and stay in a match. Press Record before and leave it for one minute. Change what you want to change. Press Record after the same way. The window prints average FPS, 1% low and 0.1% low from the displayed frames. If it says nothing was measured, the game was not seen. Do not treat a blank as zero.
+
+Startup menu
+Tick only the programs that should not open with Windows, then press Turn ticked ones off. They stay installed. Windows Security and this program are not in the list. Undo on the PC window turns the rest back on.
 
 Test on your own PC
 Press Check this PC and copy the whole text.

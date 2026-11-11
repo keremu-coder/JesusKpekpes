@@ -8,7 +8,7 @@ sealed class HomeForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 560);
+        ClientSize = new Size(460, 680);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 11f);
@@ -30,7 +30,9 @@ sealed class HomeForm : Form
         var programs = Button("Get the audio programs", 278, () => new ProgramsForm().ShowDialog(this));
         var cod = Button("Call of Duty settings", 342, () => new CodForm().Show());
         var check = Button("Sound check (compare two tunes)", 406, () => new SoundCheckForm().Show());
-        Controls.AddRange([title, body, audio, pc, programs, cod, check]);
+        var bench = Button("Monitor and frames", 470, () => new BenchForm().Show());
+        var startup = Button("Startup menu", 534, () => new StartupForm().Show());
+        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup]);
     }
 
     static Button Button(string text, int y, Action click)

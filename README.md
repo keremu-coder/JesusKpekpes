@@ -10,11 +10,17 @@ PC tune. What will change lists the PC and controller settings before anything i
 
 Check this PC reads Secure Boot, Resizable BAR, RAM speed and the Call of Duty config path. It does not write the game file. Optimize sets NVIDIA Power management mode to Prefer maximum performance for Call of Duty, and Undo puts the previous value back. If NVIDIA's interface is missing, nothing is written and the check tells you to set it by hand. The check can see Resizable BAR. It cannot change the BIOS.
 
-The Call of Duty settings window sets Reflex to On + boost, and the in-game frame cap to one under the primary monitor. A 200 Hz panel gets 199. Resolution, the Windows refresh rate, and DLSS stay as they are. Close the game first. Undo puts the original file back.
+The Call of Duty settings window sets Reflex to On + boost, and the in-game frame cap to one under the primary monitor. A 200 Hz panel gets 199. Resolution and DLSS stay as they are. Close the game first. Undo puts the original file back.
+
+Monitor and frames. If Windows is running the monitor below the highest rate it already lists at the current resolution, Optimize raises it to that rate. A 60 Hz desktop on a panel that lists 200 Hz at the same resolution becomes 200. The resolution is not changed, and a rate that is not in Windows' list is not invented. Undo puts the old rate back. Record before and Record after run PresentMon for one minute and print average FPS, 1% low and 0.1% low from the displayed frames. Those numbers are the capture. They are not a guess, and one pair is not proof.
+
+Startup menu. Tick a program to stop it opening with Windows. The program is not deleted. Windows Security and this program stay on. Undo turns the ones this window turned off back on.
+
+Install. JesusKpekpes-Setup.exe puts the program in Program Files, adds a Start menu shortcut, and adds an entry under Windows Settings, Apps. Uninstall from there puts the PC changes back and leaves audio as it is. The zip is the same program without the installer. The exe is not signed unless a certificate is stored in the repository secrets, and there is no auto-update.
 
 Name the hitch watches for about 20 seconds while you play, then prints the driver or process behind the longest stall. It does not change a setting, it does not turn that driver off, and a name by itself does not add frames. If Windows will not give the trace, it says so and stops.
 
-Download. The Release workflow builds JesusKpekpes-win-x64.zip. Extract the whole folder and run JesusKpekpes.exe from inside it. The exe is not signed unless a certificate is stored in the repository secrets, and there is no auto-update. An updater on an unsigned Administrator program would be a bad idea. [USING.txt](USING.txt) is the short guide: the buttons, the PC test to copy back, and the Rara comparison. Those two results have to come from your PC. This page cannot invent them. Screenshots have to be taken there too.
+Download. The Release workflow builds JesusKpekpes-Setup.exe and JesusKpekpes-win-x64.zip. Run the setup to install, or extract the whole zip and run JesusKpekpes.exe from inside it. [USING.txt](USING.txt) is the short guide: the buttons, the PC test to copy back, and the Rara comparison. Those two results have to come from your PC. This page cannot invent them. Screenshots have to be taken there too.
 
 The plug-in does not include Steinberg's VST2 SDK. [plugin/NOTICE.txt](plugin/NOTICE.txt) is the finding. Do not sell it as a VST product until a lawyer has looked at it.
 

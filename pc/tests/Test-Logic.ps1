@@ -15,6 +15,9 @@ $env:ProgramData = $tmp
 . (Join-Path $repo 'lib\Stats.ps1')
 . (Join-Path $repo 'lib\Safety.ps1')
 . (Join-Path $repo 'lib\Topology.ps1')
+. (Join-Path $repo 'lib\Display.ps1')
+. (Join-Path $repo 'lib\Startup.ps1')
+. (Join-Path $repo 'lib\Frames.ps1')
 . (Join-Path $repo 'modules\Pc.ps1')
 . (Join-Path $repo 'modules\Controller.ps1')
 
@@ -557,6 +560,23 @@ Assert-That 'undo names the setting that was changed behind its back' (($undone.
 Remove-Item -LiteralPath function:Get-RegRaw -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath function:New-ItemProperty -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath function:Remove-ItemProperty -ErrorAction SilentlyContinue
+
+Write-Host 'Monitor rate'
+$panel = @(
+    [pscustomobject]@{ W = 1920; H = 1080; Hz = 60 },
+    [pscustomobject]@{ W = 1920; H = 1080; Hz = 200 },
+    [pscustomobject]@{ W = 1280; H = 720; Hz = 360 }
+)
+Assert-That '60 Hz at this resolution rises to 200' ((Select-KRefreshHz 1920 1080 60 $panel) -eq 200)
+Assert-That 'already at 200 is left alone' ((Select-KRefreshHz 1920 1080 200 $panel) -eq 0)
+Assert-That 'a higher rate at another resolution is not chosen' ((Select-KRefreshHz 2560 1440 60 @([pscustomobject]@{ W = 2560; H = 1440; Hz = 60 }, [pscustomobject]@{ W = 1920; H = 1080; Hz = 240 })) -eq 0)
+Assert-That 'an unreadable rate is not changed' ((Select-KRefreshHz 1920 1080 0 $panel) -eq 0)
+Assert-That 'startup off starts with byte 3' ((Get-KStartupOffBytes)[0] -eq 3)
+Assert-That 'a missing startup flag counts as on' (Test-KStartupOn $null)
+Assert-That 'byte 2 is on and byte 3 is off' ((Test-KStartupOn ([byte[]](2, 0))) -and -not (Test-KStartupOn (Get-KStartupOffBytes)))
+Assert-That 'Windows Security is never turned off' (Test-KStartupProtected 'SecurityHealth')
+Assert-That 'a normal startup item is allowed' (-not (Test-KStartupProtected 'OneDrive'))
+Assert-That 'the shipped PresentMon matches the pinned hash' ((Test-KPresentMon) -eq '')
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''

@@ -65,15 +65,45 @@ jobs:
           & $kit.FullName sign /fd SHA256 /f $pfx /p $env:PFX_PW /tr http://timestamp.digicert.com /td SHA256 publish/JesusKpekpes.exe publish/pc/controller/KpekpesPCOptimizer.exe
           if ($LASTEXITCODE -ne 0) { throw 'signtool failed' }
           Remove-Item -LiteralPath $pfx -Force
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $version = '0.0.0'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME.TrimStart('v')
+            if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'a tag must look like v1.2.3' }
+          }
+          $payload = Join-Path $env:GITHUB_WORKSPACE 'setup\payload.zip'
+          if (Test-Path $payload) { Remove-Item $payload -Force }
+          Compress-Archive -Path (Join-Path $env:GITHUB_WORKSPACE 'publish\*') -DestinationPath $payload
+          dotnet publish setup/JesusKpekpes.Setup.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -p:DebugSymbols=false -p:Version=$version -o setup-out
+          if (-not (Test-Path setup-out/JesusKpekpes-Setup.exe)) { throw 'the installer was not built' }
+      - name: Sign the installer if a certificate is stored
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_PFX_BASE64 }}
+          PFX_PW: ${{ secrets.WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) { Write-Host 'No certificate stored. The installer stays unsigned.'; exit 0 }
+          $kit = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $kit) { throw 'signtool was not found' }
+          $pfx = Join-Path $env:RUNNER_TEMP 'sign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          & $kit.FullName sign /fd SHA256 /f $pfx /p $env:PFX_PW /tr http://timestamp.digicert.com /td SHA256 setup-out/JesusKpekpes-Setup.exe
+          if ($LASTEXITCODE -ne 0) { throw 'signtool failed' }
+          Remove-Item -LiteralPath $pfx -Force
       - name: Zip
         shell: pwsh
         run: |
           $zip = Join-Path $env:GITHUB_WORKSPACE 'JesusKpekpes-win-x64.zip'
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path publish\* -DestinationPath $zip
-          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
-          Set-Content -LiteralPath SHA256SUMS.txt -Value ("$hash  JesusKpekpes-win-x64.zip") -Encoding ascii
-          Write-Host "sha256 $hash"
+          $setup = Join-Path $env:GITHUB_WORKSPACE 'setup-out\JesusKpekpes-Setup.exe'
+          $lines = @(
+            "$((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash)  JesusKpekpes-win-x64.zip",
+            "$((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash)  JesusKpekpes-Setup.exe"
+          )
+          Set-Content -LiteralPath SHA256SUMS.txt -Value $lines -Encoding ascii
       - name: Publish the release
         shell: pwsh
         env:
@@ -87,11 +117,12 @@ jobs:
           if ($env:GITHUB_REF_TYPE -ne 'tag') { gh release delete $tag --yes --cleanup-tag 2>$null | Out-Null }
           @(
             $signed
-            'There is no auto-update. Download the next zip yourself.'
-            'Extract the whole folder and run JesusKpekpes.exe from inside it.'
+            'There is no auto-update. Download the next build yourself.'
+            'Run JesusKpekpes-Setup.exe to install. Uninstall from Windows Settings puts the PC changes back and leaves audio as it is.'
+            'Or extract JesusKpekpes-win-x64.zip and run JesusKpekpes.exe from inside it.'
             ''
             (Get-Content -LiteralPath USING.txt -Raw)
           ) | Set-Content -LiteralPath release-notes.txt -Encoding utf8
-          $ghArgs = @('release', 'create', $tag, 'JesusKpekpes-win-x64.zip', 'SHA256SUMS.txt', '--title', $title, '--notes-file', 'release-notes.txt', '--target', $env:GITHUB_SHA)
+          $ghArgs = @('release', 'create', $tag, 'JesusKpekpes-win-x64.zip', 'setup-out/JesusKpekpes-Setup.exe', 'SHA256SUMS.txt', '--title', $title, '--notes-file', 'release-notes.txt', '--target', $env:GITHUB_SHA)
           if ($env:GITHUB_REF_TYPE -ne 'tag') { $ghArgs += '--prerelease' }
           gh @ghArgs
