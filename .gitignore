@@ -2,3 +2,6 @@ bin/
 obj/
 *.user
 .vs/
+setup/payload.zip
+setup-out/
+

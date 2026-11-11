@@ -83,9 +83,13 @@ sealed class PcForm : Form
 
         - NVIDIA Power management mode = Prefer maximum performance for Call of Duty. Undo puts the old value back.
         - If NVIDIA's interface is missing, nothing is written. Add cod.exe and set Power management mode to Prefer maximum performance by hand.
+        - If Windows is running a monitor below the highest rate it already lists at this resolution, that rate is raised. The resolution is not changed. A rate that is not in Windows' list is not invented. Undo puts the old rate back.
         The check can see Resizable BAR from the driver. It cannot flip the BIOS switch.
 
+        Startup programs are not turned off here. Use Startup menu, and tick only the ones you want off. They are not deleted.
+
         Name the hitch only watches for about 20 seconds and prints the driver or process behind the longest stall. It does not change any setting and it does not turn that driver off.
+        Frame numbers are not estimated here. Monitor and frames records a minute of the game and counts average, 1% low and 0.1% low from that capture.
         """;
 
     void Show(string text) => _out.Text = string.IsNullOrWhiteSpace(text) ? "No report came back." : text;
