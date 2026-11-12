@@ -89,8 +89,8 @@ public static class TuneEngine
         var length = ears.Min(e => e.Length);
         var rate = Rate(sampleRate);
         var amount = Math.Clamp(hit, 0, 100) / 100f;
-        var maxWeight = 7f * amount;
-        var maxTick = 10f * amount;
+        var maxWeight = 12f * amount;
+        var maxTick = 16f * amount;
         var fastA = 1f - MathF.Exp(-1f / (rate * 0.0025f));
         var fastR = 1f - MathF.Exp(-1f / (rate * 0.040f));
         var slowA = 1f - MathF.Exp(-1f / (rate * 0.080f));
@@ -139,10 +139,12 @@ public static class TuneEngine
             }
             var weightGain = TransientGain(bestWeightFast, bestWeightRatio, maxWeight);
             var tickGain = TransientGain(bestTickFast, bestTickRatio, maxTick);
+            var punch = weightGain > tickGain ? weightGain : tickGain;
+            var duck = Aside(punch);
             for (var k = 0; k < count; k++)
             {
                 var gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
-                var y = other[k] + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
+                var y = other[k] * duck + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
                 ears[k][i] = y;
@@ -171,12 +173,20 @@ public static class TuneEngine
         var edge = novelty / 12f;
         if (edge > 1f) edge = 1f;
         var level = 20f * MathF.Log10(fast + 1e-8f);
-        var quiet = (-6f - level) / 26f;
-        if (quiet < 0f) quiet = 0f;
+        var quiet = (-2f - level) / 22f;
+        if (quiet < 0.65f) quiet = 0.65f;
         if (quiet > 1f) quiet = 1f;
         var db = maxDb * quiet * edge;
         if (db <= 0f) return 1f;
         return MathF.Pow(10f, db / 20f);
+    }
+
+    static float Aside(float gain)
+    {
+        if (gain <= 1.02f) return 1f;
+        var t = (gain - 1f) / 2.5f;
+        if (t > 1f) t = 1f;
+        return MathF.Pow(10f, -10f * t / 20f);
     }
 
     static int Rate(int sampleRate) => sampleRate >= 1000 ? sampleRate : 48000;

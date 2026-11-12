@@ -408,7 +408,13 @@ while ($true) { Start-Sleep -Seconds 3600 }
     [IO.File]::WriteAllText($hp, $hold, (New-Object Text.UTF8Encoding($false)))
     Stop-KProcessByCommandLine '*TimerResolutionHold*'
     [void](Add-KEntry 'proc|timerhold' @{ Type = 'proc'; Pattern = '*TimerResolutionHold*' })
-    Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $hp + '"') -WindowStyle Hidden
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = 'powershell.exe'
+    $start.Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $hp + '"'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    [void][System.Diagnostics.Process]::Start($start)
     try {
         [void](Add-KEntry ('task|' + $script:TaskTimer) @{ Type = 'task'; Name = $script:TaskTimer })
         $u = $env:USERDOMAIN + '\' + $env:USERNAME

@@ -182,7 +182,8 @@ static void arm_nova(Lane* lane, float rate) {
     lane->gun_release = 1.f - expf(-1.f / (rate * 0.045f));
 }
 
-/* One gain for every ear. A steady band (ratio near 1) stays at 1. A quiet hit is lifted, up to max_db. */
+/* One gain for every ear. A steady band (ratio near 1) stays at 1.
+   A hit is lifted even when it is not tiny, up to max_db. The floor keeps a normal foot from being ignored. */
 static float transient_gain(float fast, float ratio, float max_db) {
     float novelty, edge, level, quiet, db;
     if (max_db <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 1.f;
@@ -191,12 +192,20 @@ static float transient_gain(float fast, float ratio, float max_db) {
     edge = novelty / 12.f;
     if (edge > 1.f) edge = 1.f;
     level = 20.f * log10f(fast + 1e-8f);
-    quiet = (-6.f - level) / 26.f;
-    if (quiet < 0.f) quiet = 0.f;
+    quiet = (-2.f - level) / 22.f;
+    if (quiet < 0.65f) quiet = 0.65f;
     if (quiet > 1.f) quiet = 1.f;
     db = max_db * quiet * edge;
     if (db <= 0.f) return 1.f;
     return powf(10.f, db / 20.f);
+}
+
+static float aside(float gain) {
+    float t;
+    if (gain <= 1.02f) return 1.f;
+    t = (gain - 1.f) / 2.5f;
+    if (t > 1.f) t = 1.f;
+    return powf(10.f, -10.f * t / 20.f);
 }
 
 static void consider(float fast, float slow, float* best_fast, float* best_ratio) {
@@ -207,8 +216,8 @@ static void consider(float fast, float slow, float* best_fast, float* best_ratio
 
 static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
     Bank* bank = effect->object;
-    float max_weight = 7.f * bank->hit;
-    float max_tick = 10.f * bank->hit;
+    float max_weight = 12.f * bank->hit;
+    float max_tick = 16.f * bank->hit;
     i32 i, ch, nch = effect->inputs;
     if (nch > 8) nch = 8;
     for (i = 0; i < frames; i++) {
@@ -237,17 +246,21 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
         }
         weight_gain = transient_gain(best_w_fast, best_w_ratio, max_weight);
         tick_gain = transient_gain(best_t_fast, best_t_ratio, max_tick);
-        for (ch = 0; ch < nch; ch++) {
-            Lane* lane;
-            float gun_gain, y, mag;
-            if (!inputs[ch] || !outputs[ch]) continue;
-            lane = &bank->lane[ch];
-            gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
-            y = other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
-            mag = fabsf(y);
-            if (mag > 0.8912509f)
-                y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
-            outputs[ch][i] = y;
+        {
+            float punch = weight_gain > tick_gain ? weight_gain : tick_gain;
+            float duck = aside(punch);
+            for (ch = 0; ch < nch; ch++) {
+                Lane* lane;
+                float gun_gain, y, mag;
+                if (!inputs[ch] || !outputs[ch]) continue;
+                lane = &bank->lane[ch];
+                gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+                y = other_b[ch] * duck + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
+                mag = fabsf(y);
+                if (mag > 0.8912509f)
+                    y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
+                outputs[ch][i] = y;
+            }
         }
     }
 }

@@ -8,8 +8,8 @@ cd /d "%~dp0"
 :: stops Windows from power-throttling it and keeps the PC awake while the game runs.
 
 :: Exit quietly if the optimizer is already running (avoids hidden duplicates)
-powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'KpekpesPCOptimizer.exe' }) { exit 1 }"
-if errorlevel 1 exit /b
+tasklist /NH /FI "IMAGENAME eq KpekpesPCOptimizer.exe" | find /I "KpekpesPCOptimizer.exe" >nul
+if not errorlevel 1 exit /b
 
 :: Your DS4Windows profile path (read only, for the stick report in the log)
 set "PROFILE=@@PROFILE@@"

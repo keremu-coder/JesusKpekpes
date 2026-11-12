@@ -8,6 +8,7 @@ sealed class StartupForm : Form
 
     public StartupForm()
     {
+        Window.Prepare(this);
         Text = "Startup menu";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;

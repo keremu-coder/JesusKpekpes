@@ -11,6 +11,10 @@ static class Program
             Uninstall.Run();
             return;
         }
-        Application.Run(args.Contains("--on") ? new GuideForm(true) : new HomeForm());
+        using var gate = new Mutex(true, @"Local\JesusKpekpes", out var first);
+        if (!first) return;
+        Quiet.ReplaceOptimizer();
+        Application.Run(new HomeForm());
+        GC.KeepAlive(gate);
     }
 }

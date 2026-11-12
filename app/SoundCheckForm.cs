@@ -11,6 +11,7 @@ sealed class SoundCheckForm : Form
 
     public SoundCheckForm()
     {
+        Window.Prepare(this);
         Text = "Sound check";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
