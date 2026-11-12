@@ -1,5 +1,9 @@
 Jesus Kpekpes
 
+Download JesusKpekpes-Setup.exe from the Releases page. This source folder is not the program.
+
+https://github.com/keremu-coder/JesusKpekpes/releases/latest
+
 This build is not signed. Windows SmartScreen will warn you. Choose More info, then Run anyway, then Yes when Windows asks for Administrator. There is no auto-update. An updater on an unsigned Administrator program would be a bad idea.
 
 Run JesusKpekpes-Setup.exe to install. It appears in the Start menu and in Windows Settings, Apps. Uninstall there puts the PC changes back and leaves audio as it is. Or extract the zip and run JesusKpekpes.exe from inside it. Keep the pc folder and JesusKpekpesTune.dll beside the exe.

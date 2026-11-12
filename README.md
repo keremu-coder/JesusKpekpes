@@ -1,5 +1,14 @@
 Jesus Kpekpes
 
+**Run it from here. This folder is the source, and it does not contain the program.**
+
+1. Download [JesusKpekpes-Setup.exe](https://github.com/keremu-coder/JesusKpekpes/releases/latest/download/JesusKpekpes-Setup.exe).
+2. If Windows says it protected your PC, choose More info, then Run anyway.
+3. Click Yes when it asks for Administrator.
+4. Press Install. Jesus Kpekpes is then in the Start menu.
+
+The zip is the same program without the installer: [JesusKpekpes-win-x64.zip](https://github.com/keremu-coder/JesusKpekpes/releases/latest/download/JesusKpekpes-win-x64.zip). Extract the whole zip and run `JesusKpekpes.exe` inside it. Do not use the green Code button. That download is source, and there is no program in it.
+
 The window has two separate parts.
 
 Audio tune. Drop and Well are the two footstep mixes. Nova Pro is a third mix, only for the Arctis Nova Pro on the small USB adapter. It does not replace Drop or Well. The step tick sits at 3.2 kHz, where that headset is dipped, and the 8 kHz peak is pulled down. A step is lifted only while it is a hit, so a steady sound is not turned up. Stereo and 7.1 both keep a left step on the left. It is not a hearing aid. Leave Sonar, the GameDAC EQ, and Insured Audio off, or they stack. Stereo is the default. Turn it off and the rest of your audio, including Rara, is left in place. Keep my other audio setup is on by default.
