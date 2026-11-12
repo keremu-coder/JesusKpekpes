@@ -149,9 +149,9 @@ static void split(Lane* lane, float x, Split* out) {
     out->other = x - gun_band - foot_band;
 }
 
-/* Linear gain for the foot band, never below 1. Up to +6 dB for a quiet foot, easing to 1 as the band gets loud. */
+/* Linear gain for the foot band, never below 1. Up to +10 dB for a quiet foot, easing to 1 as the band gets loud. */
 static float lift(float env) {
-    float db = 6.f - reduction(env, -20.f, 0.5f);
+    float db = 10.f - reduction(env, -20.f, 1.f);
     return db > 0.f ? powf(10.f, db / 20.f) : 1.f;
 }
 

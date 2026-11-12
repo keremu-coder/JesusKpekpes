@@ -45,9 +45,48 @@ sealed class SetupForm : Form
         };
         install.FlatAppearance.BorderSize = 0;
         install.Click += (_, _) => Install(install);
+        var had = Existing();
+        if (had is { } found)
+        {
+            var mine = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
+            var same = string.Equals(found.Version, mine, StringComparison.Ordinal);
+            _status.Text = same
+                ? "Jesus Kpekpes " + found.Version + " is already installed. You do not need to install it again. Open it, or press Reinstall to repair it."
+                : "Jesus Kpekpes " + found.Version + " is installed. This setup has " + mine + ". Press Update to replace it.";
+            install.Text = same ? "Reinstall" : "Update";
+            var open = new Button
+            {
+                Text = "Open Jesus Kpekpes",
+                Bounds = new Rectangle(200, 200, 220, 44),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(40, 120, 80),
+                ForeColor = Color.White,
+            };
+            open.FlatAppearance.BorderSize = 0;
+            open.Click += (_, _) =>
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(found.Exe) { UseShellExecute = true });
+                Close();
+            };
+            Controls.Add(open);
+        }
         Controls.Add(body);
         Controls.Add(_status);
         Controls.Add(install);
+    }
+
+    /// <summary>The installed copy, if the Windows uninstall entry is there and its program file still exists.</summary>
+    static (string Version, string Exe)? Existing()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\JesusKpekpes");
+            if (key?.GetValue("InstallLocation") is not string dir) return null;
+            var exe = Path.Combine(dir, "JesusKpekpes.exe");
+            if (!File.Exists(exe)) return null;
+            return (key.GetValue("DisplayVersion") as string ?? "?", exe);
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException) { return null; }
     }
 
     void Install(Button button)

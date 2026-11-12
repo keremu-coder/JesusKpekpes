@@ -289,7 +289,7 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
         Check(Db(left, rate / 2, rate) >= Db(inL, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the louder ear must not be turned down");
     Check(Db(right, rate / 2, rate) >= Db(inR, rate / 2, rate) - 0.05, $"{levelDb} dBFS: the quieter ear must not be turned down");
         if (levelDb <= -30)
-            Check(Db(left, rate / 2, rate) - Db(inL, rate / 2, rate) > 5.5, $"{levelDb} dBFS: a quiet foot should be lifted by about 6 dB");
+            Check(Db(left, rate / 2, rate) - Db(inL, rate / 2, rate) > 9.0, $"{levelDb} dBFS: a quiet foot should be lifted by about 10 dB");
     }
     var hush = new float[rate];
     TuneEngine.CompressLinked([hush], rate);
@@ -428,6 +428,26 @@ Check(Installer.ApoFileFromRelease("{\"platform_releases\":{\"windows\":{\"filen
 Check(Installer.ApoFileFromRelease("{\"platform_releases\":{}}") is null, "missing windows entry must give null");
 Check(Installer.ApoFileFromRelease("not json") is null, "bad json must give null");
 Check(Installer.CanInstall("ReaPlugs") && !Installer.CanInstall("HeSuVi"), "only APO and ReaPlugs download");
+
+// ---- PC report: plain words, real line breaks ----
+{
+    var raw = "== PC optimizer - state ==\n  [FAIL] Fast startup off  - found 1\n  [FAIL] TcpNoDelay (global)  - not set\n  [WARN] Monitor refresh  - running 60 Hz\n  [PASS] Secure Boot  - on\n  SCORE: 15%  (17 of 113 checks passed, 2 warnings, 6 not applicable)";
+    var items = PcReport.Items(raw);
+    Check(items.Count == 4, "four result lines expected, got " + items.Count);
+    Check(items[0].Name == "Fast startup off" && items[0].Detail == "found 1", "name and detail must split on the dash");
+    Check(PcReport.Group("Nagle off: TCPNoDelay (Wi-Fi 2)") == "Internet delay", "network settings group");
+    Check(PcReport.Group("Microsoft.XboxGamingOverlay") == "Xbox apps that run in the background", "xbox before game");
+    var plain = PcReport.Verify(raw);
+    Check(plain.Contains("15% ready"), "the score must be said plainly");
+    Check(plain.Contains("Nothing was changed"), "the check must say it only looked");
+    Check(plain.Contains("Monitor refresh"), "a warning must be listed for the person to do");
+    Check(!plain.Replace("\r\n", "").Contains('\n'), "line breaks must be CRLF for the text box");
+    Check(PcReport.Optimized("Done. Restart Windows once.", 0).StartsWith("Finished."), "a clean run says finished");
+    Check(PcReport.Optimized("boom", 1).StartsWith("It stopped"), "a failed run says it stopped");
+}
+Check(NetCheck.Verdict(540, 510, false).Contains("too high"), "a 540 ms line must be called too high");
+Check(NetCheck.Verdict(20, 25, true).Contains("very good"), "a 20 ms line is very good");
+Check(NetCheck.Verdict(-1, -1, false).Contains("No answer"), "no ping at all must be said");
 
 // Damaged Call of Duty options files. The parser may only change a real "Key@index = value" line.
 {
