@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../freq_guard.h" // <--- ADDED THIS
+#include "../freq_guard.h" // FIXED: Points to root directory
 
 #if defined(_WIN32)
 #define EXPORT __declspec(dllexport)
@@ -85,11 +85,10 @@ typedef struct {
     float rate;
     float hit;
     int mode;
-    fg_state_t gun_guard; // <--- ADDED THIS
+    fg_state_t gun_guard;
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
-    /* 3.14159274f is the same float the C# preview uses for pi, so the two filters match. */
     float w = 2.f * 3.14159274f * hz / rate;
     float c = cosf(w);
     float alpha = sinf(w) / (2.f * q);
@@ -151,7 +150,6 @@ static void split(Lane* lane, float x, Split* out) {
     out->other = x - gun_band - foot_band;
 }
 
-/* Linear gain for the foot band, never below 1. Up to +6 dB for a quiet foot, easing to 1 as the band gets loud. */
 static float lift(float env) {
     float db = 6.f - reduction(env, -20.f, 0.5f);
     return db > 0.f ? powf(10.f, db / 20.f) : 1.f;
@@ -184,7 +182,6 @@ static void arm_nova(Lane* lane, float rate) {
     lane->gun_release = 1.f - expf(-1.f / (rate * 0.045f));
 }
 
-/* One gain for every ear. A steady band (ratio near 1) stays at 1. A quiet hit is lifted, up to max_db. */
 static float transient_gain(float fast, float ratio, float max_db) {
     float novelty, edge, level, quiet, db;
     if (max_db <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 1.f;
@@ -279,8 +276,7 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
         }
     }
     
-    // <--- ADDED THIS BLOCK --->
-    // Apply the Gunshot Suppressor AFTER your existing tune processing
+    // Apply the Gunshot Suppressor
     fg_process_block(&bank->gun_guard, outputs, frames);
 }
 
@@ -368,7 +364,6 @@ EXPORT Effect* VSTPluginMain(void* host) {
     bank->hit = 1.f;
     bank->mode = 0;
     
-    // <--- ADDED THIS LINE --->
     // Initialize the Gunshot Suppressor (48000Hz, 8 channels)
     fg_init(&bank->gun_guard, 48000.0f, 8);
 
@@ -405,18 +400,19 @@ static double rms_db(const float* x, int from, int to) {
     return 10.0 * log10(sum / (to - from) + 1e-20);
 }
 
-/* A foot in one ear, 15 dB quieter in the other. The plugin must keep that gap and must never turn a foot-band tone down. */
+// FIXED: Safely handles 8 channels to prevent Access Violation crash
 static int check_ears(void) {
     enum { sr = 48000, n = 48000 };
-    static float l[n], r[n], lin[n], rin[n];
+    static float l[n], r[n], lin[n], rin[n], silent[n];
+    memset(silent, 0, sizeof(silent));
     static const double levels[] = { -35, -30, -20, -12, -6 };
     int bad = 0, k, i;
     for (k = 0; k < 5; k++) {
         float a_l = powf(10.f, (float)levels[k] / 20.f) * 1.41421356f;
         float a_r = a_l * powf(10.f, -15.f / 20.f);
         Effect* e = VSTPluginMain(0);
-        float* in[8] = { l, r };
-        float* out[8] = { l, r };
+        float* in[8] = { l, r, silent, silent, silent, silent, silent, silent };
+        float* out[8] = { l, r, silent, silent, silent, silent, silent, silent };
         double gap_in, gap_out, l_in, r_in, l_out, r_out;
         for (i = 0; i < n; i++) {
             float s = sinf(2.f * 3.14159265f * 180.f * i / sr);
@@ -442,14 +438,15 @@ static double energy(const float* x, int from, int count) {
     return sum;
 }
 
-/* Nova is a separate mode. A steady 3.2 kHz tone must not be lifted. A short hit must be. */
+// FIXED: Safely handles 8 channels
 static int check_nova(void) {
     enum { sr = 48000, n = 48000 };
-    static float tone[n], tone_r[n], dry[n];
+    static float tone[n], tone_r[n], dry[n], silent[n];
     static float burst[n], burst_r[n], burst_dry[n];
+    memset(silent, 0, sizeof(silent));
     Effect* e = VSTPluginMain(0);
-    float* in[8] = { tone, tone_r };
-    float* out[8] = { tone, tone_r };
+    float* in[8] = { tone, tone_r, silent, silent, silent, silent, silent, silent };
+    float* out[8] = { tone, tone_r, silent, silent, silent, silent, silent, silent };
     char name0[9], name1[9];
     int i, bad = 0;
     int burst_at = n / 3;
@@ -488,8 +485,8 @@ static int check_nova(void) {
     if (!(hit > steady * 2.0)) bad = 1;
     {
         static float z[64], zr[64];
-        float* zin[8] = { z, zr };
-        float* zout[8] = { z, zr };
+        float* zin[8] = { z, zr, silent, silent, silent, silent, silent, silent };
+        float* zout[8] = { z, zr, silent, silent, silent, silent, silent, silent };
         replace(e, zin, zout, 64);
         for (i = 0; i < 64; i++) if (z[i] != 0.f || zr[i] != 0.f) bad = 1;
     }
@@ -501,8 +498,6 @@ static int read_full(void* dst, size_t bytes) {
     return fread(dst, 1, bytes, stdin) == bytes;
 }
 
-/* Same samples in, same samples out, so the C# preview can be compared with this file.
-   Header: TNP1, channels, frames, mode (0 classic, 1 nova), rate, hit. Then planar float32. */
 static int pipe_mode(void) {
     char magic[4];
     i32 channels = 0, frames = 0, mode = 0, rate = 0, ch;
@@ -546,10 +541,11 @@ static int pipe_mode(void) {
 
 int main(int argc, char** argv) {
     enum { sr = 48000, n = 48000 };
-    static float left[n], right[n];
+    static float left[n], right[n], silent[n];
+    memset(silent, 0, sizeof(silent));
     Effect* effect;
-    float* inputs[8] = { left, right };
-    float* outputs[8] = { left, right };
+    float* inputs[8] = { left, right, silent, silent, silent, silent, silent, silent };
+    float* outputs[8] = { left, right, silent, silent, silent, silent, silent, silent };
     int at = (int)(sr * 0.4f);
     int len = (int)(sr * 0.032f);
     int i;
