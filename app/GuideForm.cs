@@ -91,8 +91,16 @@ sealed class GuideForm : Form
 
         Style(_back, "Back", 28, 492, 120);
         Style(_next, "Next", 252, 492, 180);
-        _back.Click += (_, _) => ShowPage(_page - 1);
-        _next.Click += (_, _) => OnNext();
+        _back.Click += (_, _) =>
+        {
+            if (_offerDone) TurnOff();
+            else ShowPage(_page - 1);
+        };
+        _next.Click += (_, _) =>
+        {
+            if (_offerDone) Close();
+            else OnNext();
+        };
 
         Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _level, _keep, _back, _next]);
         Restore();
@@ -104,6 +112,7 @@ sealed class GuideForm : Form
     void ShowPage(int page)
     {
         _page = Math.Clamp(page, 0, 2);
+        _back.Text = "Back";
         _back.Visible = _page > 0;
         _list.Visible = _page == 0;
         var mix = _page == 2;
@@ -144,7 +153,13 @@ sealed class GuideForm : Form
             else
             {
                 RefreshRoute();
-                _next.Text = _on ? "Turn off" : "Turn on";
+                if (_on) ArmDone();
+                else
+                {
+                    _offerDone = false;
+                    _back.Text = "Back";
+                    _next.Text = "Turn on";
+                }
                 _next.Enabled = true;
             }
         }
@@ -166,6 +181,16 @@ sealed class GuideForm : Form
 
     bool _on;
     bool _loading = true;
+    bool _offerDone;
+
+    void ArmDone()
+    {
+        _offerDone = true;
+        _back.Text = "Turn off";
+        _back.Visible = true;
+        _next.Text = "Done";
+        _next.Enabled = true;
+    }
 
     void RefreshRoute()
     {
@@ -210,8 +235,7 @@ sealed class GuideForm : Form
         if (saved.On == true)
             _on = InPlace.Apply(phones.Id, Current(phones.Name), _keep.Checked) is WriteResult.On or WriteResult.NotAttached;
         ShowPage(2);
-        _next.Text = _on ? "Turn off" : "Turn on";
-        if (_on) _body.Text = $"On. {phones.Name} is remembered. Closing this window leaves the tune on.";
+        if (_on) _body.Text = $"On. {phones.Name} is remembered. Press Done when you are finished. Closing this window leaves the tune on.";
     }
 
     MixPlan Current(string name) => new(
@@ -235,7 +259,12 @@ sealed class GuideForm : Form
         var result = InPlace.Apply(phones.Id, Current(phones.Name), _keep.Checked || _keepOthers);
         _on = result is WriteResult.On or WriteResult.NotAttached;
         Remember(phones.Id, _on);
-        _next.Text = _on ? "Turn off" : "Turn on";
+        if (_on) ArmDone();
+        else
+        {
+            _offerDone = false;
+            _next.Text = "Turn on";
+        }
         _body.Text = result switch
         {
             WriteResult.On when found.Count > 0 => $"On. {string.Join(", ", found)} stays. Turn this off to use that instead.",
@@ -254,7 +283,7 @@ sealed class GuideForm : Form
             _ = InstallApo();
             return;
         }
-        if (result == WriteResult.On) Close();
+        if (_on) ArmDone();
     }
 
     async Task InstallApo()
@@ -280,6 +309,8 @@ sealed class GuideForm : Form
         _live?.Dispose();
         _live = null;
         Remember(Selected?.Id, false);
+        _offerDone = false;
+        _back.Text = "Back";
         _next.Text = "Turn on";
         _body.Text = "Off. Your other audio setup is exactly as it was.";
     }
