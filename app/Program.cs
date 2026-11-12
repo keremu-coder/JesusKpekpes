@@ -14,6 +14,7 @@ static class Program
         using var gate = new Mutex(true, @"Local\JesusKpekpes", out var first);
         if (!first) return;
         Quiet.ReplaceOptimizer();
+        try { ScriptHost.Run("-Action GameBarQuiet -Silent", 20000); } catch (Exception) { }
         Application.Run(new HomeForm());
         GC.KeepAlive(gate);
     }

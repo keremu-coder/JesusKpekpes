@@ -485,9 +485,46 @@ function Invoke-PcGameProcess {
 }
 
 # ---------------- Xbox / Game Bar ----------------
-function Get-XboxPatterns { return @('*Microsoft.XboxGamingOverlay*', '*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*') }
+# XboxGamingOverlay is the app that owns the ms-gamebar link. Removing it makes Windows
+# ask "Get an app to open this ms-gamebar link" every time a game starts. It stays installed.
+# The registry above already turns the overlay and capture off.
+function Get-XboxPatterns { return @('*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*') }
+
+function Test-KGameBarNeedsQuiet {
+    param([bool]$OverlayInstalled)
+    return -not $OverlayInstalled
+}
+
+function Get-KGameBarQuietCommand {
+    param([string]$VbsPath)
+    return 'wscript.exe //B //Nologo "' + $VbsPath + '" "%1"'
+}
+
+function Repair-PcGameBarProtocol {
+    $installed = $false
+    try { $installed = [bool](Get-AppxPackage -Name 'Microsoft.XboxGamingOverlay' -ErrorAction SilentlyContinue) } catch { }
+    if (-not (Test-KGameBarNeedsQuiet $installed)) { return }
+    if ($script:WhatIfMode) { Write-Say '  [what-if] would silence the ms-gamebar prompt' 'Yellow'; return }
+    $dir = Join-Path $script:DataRoot 'pc'
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $vbs = Join-Path $dir 'gamebar-quiet.vbs'
+    $cmd = Get-KGameBarQuietCommand $vbs
+    $commandKey = 'HKCU:\Software\Classes\ms-gamebar\shell\open\command'
+    $now = ''
+    try { $now = [string](Get-Item -LiteralPath $commandKey -ErrorAction SilentlyContinue).GetValue('') } catch { }
+    if ((Test-Path -LiteralPath $vbs) -and $now -eq $cmd) { return }
+    if (-not (Test-Path -LiteralPath $vbs)) {
+        [void](Add-KEntry ('file|' + $vbs) @{ Type = 'file'; Path = $vbs })
+        [IO.File]::WriteAllText($vbs, "' Stops Windows asking for an app to open ms-gamebar.`r`n")
+    }
+    [void](Set-KReg 'HKCU:\Software\Classes\ms-gamebar' '' 'URL:ms-gamebar' 'String')
+    [void](Set-KReg 'HKCU:\Software\Classes\ms-gamebar' 'URL Protocol' '' 'String')
+    [void](Set-KReg $commandKey '' $cmd 'String')
+    Write-Say '  the ms-gamebar prompt is silenced' 'Green'
+}
 
 function Invoke-PcXbox {
+    Repair-PcGameBarProtocol
     if (-not (Get-PcCpuPolicy).RemoveGameBar) {
         Write-Say ('  kept (' + (Get-PcCpuPolicy).Reason + ')') 'DarkGray'
         return

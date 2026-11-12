@@ -577,6 +577,10 @@ Assert-That 'byte 2 is on and byte 3 is off' ((Test-KStartupOn ([byte[]](2, 0)))
 Assert-That 'Windows Security is never turned off' (Test-KStartupProtected 'SecurityHealth')
 Assert-That 'a normal startup item is allowed' (-not (Test-KStartupProtected 'OneDrive'))
 Assert-That 'the shipped PresentMon matches the pinned hash' ((Test-KPresentMon) -eq '')
+Assert-That 'Game Bar itself is not removed' (-not ((Get-XboxPatterns -join ' ') -match 'XboxGamingOverlay'))
+Assert-That 'a missing Game Bar is silenced' (Test-KGameBarNeedsQuiet $false)
+Assert-That 'an installed Game Bar is left alone' (-not (Test-KGameBarNeedsQuiet $true))
+Assert-That 'the quiet handler is hidden' ((Get-KGameBarQuietCommand 'C:\q.vbs') -match 'wscript.exe //B' -and (Get-KGameBarQuietCommand 'C:\q.vbs') -match 'C:\\q.vbs')
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''

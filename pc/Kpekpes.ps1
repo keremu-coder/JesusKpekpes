@@ -18,7 +18,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare', 'Hitch', 'Display', 'Startup', 'StartupOff', 'Measure')][string]$Action = 'Menu',
+    [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare', 'Hitch', 'Display', 'Startup', 'StartupOff', 'Measure', 'GameBarQuiet')][string]$Action = 'Menu',
     [ValidateSet('PC', 'Controller', 'Both')][string]$Module = 'Both',
     [switch]$Silent,
     [switch]$Reapply,
@@ -251,4 +251,10 @@ elseif ($Action -eq 'StartupOff') {
 }
 elseif ($Action -eq 'Measure') {
     foreach ($line in @(Invoke-KMeasure -Side $Side -Seconds $Seconds -ProcessName $ProcessName)) { Write-Output $line }
+}
+elseif ($Action -eq 'GameBarQuiet') {
+    if (-not (Initialize-KRoot)) { Write-Output 'Could not prepare the data folder. The prompt was not changed.'; return }
+    Open-KJournal 'pc'
+    Repair-PcGameBarProtocol
+    Write-Output 'Game Bar prompt checked.'
 }
