@@ -14,6 +14,7 @@ sealed class PcForm : Form
 
     public PcForm()
     {
+        Window.Prepare(this);
         Text = "PC tune";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;

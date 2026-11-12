@@ -267,7 +267,7 @@ Assert-That 'DS4Windows gets its own NON-elevated logon task' ($ctlSrc -match "K
 Assert-That 'tuned profile is also written at install with --write-only' ($ctlSrc -match '--write-only')
 Assert-That 'DS4Elevation defaults to auto and the boost is written at every logon in both modes' (((Get-KDefaultConfig).Controller.DS4Elevation -eq 'auto') -and $ctlSrc.Contains('--strafe-boost') -and $ctlSrc.Contains('--write-only') -and $ctlSrc.Contains('--tuned-policy'))
 Assert-That 'no placeholder left after generation' (-not $gen.Contains('@@'))
-Assert-That 'bat keeps the duplicate-run guard' ($gen -match "Name -eq 'KpekpesPCOptimizer\.exe'")
+Assert-That 'bat keeps the duplicate-run guard' ($gen -match 'IMAGENAME eq KpekpesPCOptimizer.exe')
 Assert-That 'bat starts the program by its full path, not PATH lookup' ($gen -match '(?m)^"C:\\ProgramData\\KpekpesCODCustom\\controller\\bin\\KpekpesPCOptimizer\.exe" --profile' -and -not ($gen -match '(?i)python'))
 Assert-That 'bat sends the unpack folder to the protected folder' ($gen -match 'set "TEMP=%~dp0tmp"' -and $gen -match 'set "TMP=%~dp0tmp"')
 $vi = Get-Content -LiteralPath (Join-Path $repo 'controller\version_info.txt') -Raw

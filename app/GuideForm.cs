@@ -21,18 +21,17 @@ sealed class GuideForm : Form
     readonly ComboBox _level = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     readonly CheckBox _keep = new() { Text = "Keep my other audio setup", Checked = true };
     readonly System.Windows.Forms.Timer _save = new() { Interval = 400 };
-    readonly NotifyIcon _tray = new();
     int _page;
     Live? _live;
     WasapiOut? _preview;
     MMDevice? _previewDevice;
-    bool _exit;
     bool _keepOthers;
     readonly bool _resume;
 
     public GuideForm(bool resume)
     {
         _resume = resume;
+        Window.Prepare(this);
         _devices = Devices.Render();
         Text = "Jesus Kpekpes";
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -95,24 +94,6 @@ sealed class GuideForm : Form
         _next.Click += (_, _) => OnNext();
 
         Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _level, _keep, _back, _next]);
-        _tray.Icon = SystemIcons.Application;
-        _tray.Text = "Jesus Kpekpes";
-        _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Open", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; });
-        menu.Items.Add("Remove completely", null, (_, _) =>
-        {
-            InPlace.Remove();
-            _on = false;
-            _keepOthers = false;
-            _tray.Visible = false;
-            Remember(Selected?.Id, false);
-            _next.Text = "Turn on";
-            _body.Text = "Removed. Nothing of ours is left in Equalizer APO.";
-            Show();
-        });
-        menu.Items.Add("Exit", null, (_, _) => { _exit = true; Close(); });
-        _tray.ContextMenuStrip = menu;
         ShowPage(0);
         if (_resume) BeginInvoke(TryResume);
     }
@@ -146,7 +127,7 @@ sealed class GuideForm : Form
         else if (_page == 1)
         {
             _step.Text = "Step 2 of 3";
-            _body.Text = "A step plays, then a shot. The step should come through clearer than the shot.";
+            _body.Text = "A step should jump out of the noise, louder than the shot that follows, without the noise coming up with it.";
             _next.Text = "Next";
             _next.Enabled = true;
             PlayPreview();
@@ -242,7 +223,22 @@ sealed class GuideForm : Form
             _ => "Equalizer APO is not installed. Secure Boot stays on.",
         };
         if (result == WriteResult.Conflict) _keepOthers = true;
-        _tray.Visible = _on;
+        if (result == WriteResult.Missing)
+        {
+            _ = InstallApo();
+            return;
+        }
+        if (result == WriteResult.On) Close();
+    }
+
+    async Task InstallApo()
+    {
+        _next.Enabled = false;
+        _body.Text = "Equalizer APO is not installed, so the tune cannot reach the game. Downloading the checked setup.";
+        var message = await Installer.Fetch("Equalizer APO");
+        _body.Text = message + " Tick your headphones, finish, restart Windows, then press Turn on again.";
+        _next.Enabled = true;
+        _next.Text = "Turn on";
     }
 
     void TurnOff()
@@ -257,7 +253,6 @@ sealed class GuideForm : Form
         _keepOthers = false;
         _live?.Dispose();
         _live = null;
-        _tray.Visible = false;
         Remember(Selected?.Id, false);
         _next.Text = "Turn on";
         _body.Text = "Off. Your other audio setup is exactly as it was.";
@@ -275,7 +270,6 @@ sealed class GuideForm : Form
         if (!_on) return;
         ShowPage(2);
         _body.Text = $"On. The game stays on {phones.Name}.";
-        WindowState = FormWindowState.Minimized;
     }
 
     void PlayPreview()
@@ -287,15 +281,28 @@ sealed class GuideForm : Form
         var left = new float[n];
         var right = new float[n];
         var side = new float[n];
-        for (var i = sr / 2; i < sr / 2 + 120; i++)
+        var noise = 1;
+        for (var i = 0; i < n; i++)
         {
-            var env = MathF.Sin((i - sr / 2) / 120f * MathF.PI);
-            var sample = MathF.Sin(2 * MathF.PI * 180 * i / sr) * 0.04f * env;
-            if (plan.Route == Route.Stereo) { left[i] = sample; right[i] = sample * 0.3f; }
-            else side[i] = sample;
+            noise = noise * 1103515245 + 12345;
+            var bed = ((noise >> 16) & 65535) / 32768f - 1f;
+            left[i] = bed * 0.015f;
+            right[i] = bed * 0.012f;
         }
-        for (var i = sr; i < sr + (int)(sr * 0.15); i++)
-            left[i] = right[i] = MathF.Sin(2 * MathF.PI * 90 * i / sr) * 0.8f;
+        var stepAt = sr / 3;
+        for (var i = stepAt; i < stepAt + 800; i++)
+        {
+            var env = MathF.Sin((i - stepAt) / 800f * MathF.PI);
+            var step = (MathF.Sin(2 * MathF.PI * 220 * i / sr) * 0.16f + MathF.Sin(2 * MathF.PI * 3200 * i / sr) * 0.1f) * env;
+            if (plan.Route == Route.Stereo) { left[i] += step; right[i] += step * 0.28f; }
+            else side[i] = step;
+        }
+        for (var i = sr; i < sr + (int)(sr * 0.12); i++)
+        {
+            var shot = MathF.Sin(2 * MathF.PI * 140 * i / sr) * 0.22f;
+            left[i] += shot;
+            right[i] += shot;
+        }
         Mix.Process(plan, left, right, side, side);
         var interleaved = new byte[n * 8];
         for (var i = 0; i < n; i++)
@@ -326,24 +333,10 @@ sealed class GuideForm : Form
         _previewDevice = null;
     }
 
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        if ((_live is not null || _on) && !_exit)
-        {
-            e.Cancel = true;
-            Hide();
-            _tray.Visible = true;
-            return;
-        }
-        base.OnFormClosing(e);
-    }
-
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         StopPreview();
         _live?.Dispose();
-        _tray.Visible = false;
-        _tray.Dispose();
         base.OnFormClosed(e);
     }
 

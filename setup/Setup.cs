@@ -104,7 +104,7 @@ sealed class SetupForm : Form
             }
             if (System.Diagnostics.Process.GetProcessesByName("JesusKpekpes").Length > 0)
             {
-                _status.Text = "Close Jesus Kpekpes first, then press Install again. Nothing was changed.";
+                _status.Text = "Close Jesus Kpekpes first. If you cannot see it, right-click the logo by the clock and choose Exit. Nothing was changed.";
                 button.Enabled = true;
                 return;
             }
@@ -122,9 +122,9 @@ sealed class SetupForm : Form
             if (!File.Exists(exe)) throw new FileNotFoundException("JesusKpekpes.exe was not in the installer.");
             WriteShortcut(exe, dir);
             WriteUninstall(exe, dir);
-            _status.Text = "Installed. Uninstall is in Windows Settings, Apps. It puts the PC changes back and leaves audio as it is.";
-            if (MessageBox.Show(this, "Open Jesus Kpekpes now?", "Installed", MessageBoxButtons.YesNo) == DialogResult.Yes)
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
+            _status.Text = "Installed. Opening it now. This window will close.";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
+            Close();
         }
         catch (Exception ex)
         {

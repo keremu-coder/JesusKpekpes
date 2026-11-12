@@ -1,5 +1,7 @@
 Jesus Kpekpes
 
+The program is the logo by the clock, not a button on the taskbar. Minimize or the X hides the window there. Right-click the logo and choose Exit to quit. A page closes when you are done with it.
+
 Download JesusKpekpes-Setup.exe from the Releases page. This source folder is not the program.
 
 https://github.com/keremu-coder/JesusKpekpes/releases/latest

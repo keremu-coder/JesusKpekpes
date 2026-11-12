@@ -81,10 +81,15 @@ def is_admin():
     except Exception:
         return False
 
+def hidden_run(args, timeout=10):
+    kwargs = {"capture_output": True, "text": True, "timeout": timeout}
+    if IS_WIN:
+        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW, so tasklist does not flash a console
+    return subprocess.run(args, **kwargs)
+
 def find_pids(name):
     try:
-        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"],
-                             capture_output=True, text=True, timeout=10).stdout
+        out = hidden_run(["tasklist", "/FI", f"IMAGENAME eq {name}", "/FO", "CSV", "/NH"]).stdout
     except Exception:
         return []
     pids = []
@@ -100,7 +105,7 @@ def find_pids(name):
 def any_running(names):
     """True if any of the given image names is running (one tasklist call)."""
     try:
-        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=10).stdout
+        out = hidden_run(["tasklist", "/FO", "CSV", "/NH"]).stdout
     except Exception:
         return False
     low = {n.lower() for n in names}

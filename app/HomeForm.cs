@@ -2,11 +2,16 @@ namespace JesusKpekpes;
 
 sealed class HomeForm : Form
 {
+    readonly NotifyIcon _tray = new();
+    bool _quit;
+
     public HomeForm()
     {
+        Window.Prepare(this);
         Text = "Jesus Kpekpes";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
+        FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
+        MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(460, 680);
         BackColor = Color.FromArgb(7, 9, 15);
@@ -21,53 +26,67 @@ sealed class HomeForm : Form
         };
         var body = new Label
         {
-            Text = "Audio is its own switch. The PC tune does not touch it, and turning audio off does not undo the PC.",
+            Text = "One window. Minimize, or the X, hides it on the logo by the clock. It is not on the taskbar. Right-click that logo and choose Exit to quit.",
             ForeColor = Color.FromArgb(180, 184, 198),
             Bounds = new Rectangle(28, 78, 404, 70),
         };
-        var audio = Button("Audio tune", 150, () => Open(ref _audio, () => new GuideForm(false)));
-        var pc = Button("Optimize the PC", 214, () => Open(ref _pc, () => new PcForm()));
-        var programs = Button("Get the audio programs", 278, () => { Open(ref _programs, () => new ProgramsForm()); });
-        var cod = Button("Call of Duty settings", 342, () => Open(ref _cod, () => new CodForm()));
-        var check = Button("Sound check (compare two tunes)", 406, () => Open(ref _check, () => new SoundCheckForm()));
-        var bench = Button("Monitor and frames", 470, () => Open(ref _bench, () => new BenchForm()));
-        var startup = Button("Startup menu", 534, () => Open(ref _startup, () => new StartupForm()));
+        var audio = Button("Audio tune", 150, () => Open(new GuideForm(false)));
+        var pc = Button("Optimize the PC", 214, () => Open(new PcForm()));
+        var programs = Button("Get the audio programs", 278, () => Open(new ProgramsForm()));
+        var cod = Button("Call of Duty settings", 342, () => Open(new CodForm()));
+        var check = Button("Sound check (compare two tunes)", 406, () => Open(new SoundCheckForm()));
+        var bench = Button("Monitor and frames", 470, () => Open(new BenchForm()));
+        var startup = Button("Startup menu", 534, () => Open(new StartupForm()));
         Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup]);
-        // The audio tune cannot work without Equalizer APO. Offer it once per start, only when it is missing.
+        _tray.Icon = Window.Mark;
+        _tray.Text = "Jesus Kpekpes";
+        _tray.Visible = true;
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Open", null, (_, _) => Reveal());
+        menu.Items.Add("Exit", null, (_, _) => { _quit = true; Close(); });
+        _tray.ContextMenuStrip = menu;
+        _tray.MouseDoubleClick += (_, _) => Reveal();
         Shown += (_, _) =>
         {
             if (AudioKit.Installed(AudioKit.Tools[0])) return;
             BeginInvoke(() =>
             {
-                var form = Open(ref _programs, () => new ProgramsForm());
-                ((ProgramsForm)form).StartAll();
+                var form = new ProgramsForm();
+                form.Shown += (_, _) => form.StartAll();
+                Open(form);
             });
         };
     }
 
-    Form? _audio, _pc, _programs, _cod, _check, _bench, _startup;
-
-    // One window of each kind. Pressing the button again brings the open one forward instead of stacking another.
-    T Open<T>(ref T? slot, Func<T> make) where T : Form
+    void Open(Form form)
     {
-        if (slot is { IsDisposed: false } open)
-        {
-            if (!open.Visible) open.Show();
-            if (open.WindowState == FormWindowState.Minimized) open.WindowState = FormWindowState.Normal;
-            open.Activate();
-            return open;
-        }
-        var form = make();
-        slot = form;
-        form.Show(this);
-        return form;
+        using (form) form.ShowDialog(this);
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e)
+    void Reveal()
     {
-        foreach (var form in new[] { _audio, _pc, _programs, _cod, _check, _bench, _startup })
-            if (form is { IsDisposed: false }) form.Dispose();
-        base.OnFormClosed(e);
+        WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (WindowState == FormWindowState.Minimized) Hide();
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!_quit)
+        {
+            e.Cancel = true;
+            Hide();
+            return;
+        }
+        _tray.Visible = false;
+        _tray.Dispose();
+        base.OnFormClosing(e);
     }
 
     static Button Button(string text, int y, Action click)
@@ -96,6 +115,7 @@ sealed class ProgramsForm : Form
 
     public ProgramsForm()
     {
+        Window.Prepare(this);
         Text = "Audio programs";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
@@ -187,6 +207,7 @@ sealed class ProgramsForm : Form
         _all.Enabled = false;
         foreach (var get in _gets) get.Enabled = false;
         _bar.Visible = true;
+        var close = false;
         try
         {
             var done = new System.Text.StringBuilder();
@@ -204,6 +225,8 @@ sealed class ProgramsForm : Form
                 }
             }
             RefreshStatus(done.ToString().Trim());
+            var text = done.ToString();
+            close = !text.Contains("not opened") && !text.Contains("did not finish");
         }
         finally
         {
@@ -212,6 +235,7 @@ sealed class ProgramsForm : Form
             foreach (var get in _gets) get.Enabled = true;
             _busy = false;
         }
+        if (close) Close();
     }
 
     void RefreshStatus(string? message = null)

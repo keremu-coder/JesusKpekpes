@@ -6,6 +6,7 @@ sealed class CodForm : Form
 
     public CodForm()
     {
+        Window.Prepare(this);
         Text = "Call of Duty settings";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;

@@ -8,6 +8,7 @@ sealed class BenchForm : Form
 
     public BenchForm()
     {
+        Window.Prepare(this);
         Text = "Monitor and frames";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
