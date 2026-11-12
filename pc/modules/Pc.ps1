@@ -8,7 +8,7 @@ $script:PcPlanName  = 'Kpekpes COD Custom Max'
 $script:QosName     = 'Kpekpes COD Custom'
 $script:TaskReapply = 'Kpekpes PC Reapply'
 $script:TaskTimer   = 'Kpekpes Timer Resolution'
-$script:PcSteps     = 15
+$script:PcSteps     = 16
 $script:PcStepNo    = 0
 $script:GuidRx      = '[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}'
 $script:IfeoPath    = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
@@ -789,7 +789,7 @@ function Invoke-PcOptimize {
     $summary = [pscustomobject]@{ RestorePoint = ''; Before = $null; After = $null; Problems = @() }
     $problems = New-Object System.Collections.ArrayList
 
-    if ($Reapply) { $script:PcSteps = 12 } else { $script:PcSteps = 15 }
+    if ($Reapply) { $script:PcSteps = 13 } else { $script:PcSteps = 16 }
 
     if (-not $Reapply) {
         Write-PcStep 'Score before'
@@ -808,6 +808,11 @@ function Invoke-PcOptimize {
         else { Write-Say ('  restore point could not be created (' + $rp.Detail + '). The undo journal is still active.') 'Yellow'; [void]$problems.Add('restore point: ' + $rp.Detail) }
         $summary.RestorePoint = $rp.Detail
     }
+
+    Write-PcStep 'Monitor refresh'
+    try {
+        foreach ($line in @(Invoke-KDisplayRaise)) { if ($line) { Write-Say ('  ' + $line) 'White' } }
+    } catch { [void]$problems.Add('monitor: ' + $_.Exception.Message) }
 
     Write-PcStep 'Power plan (Kpekpes COD Custom Max)'
     try { if (-not (Invoke-PcPower)) { [void]$problems.Add('power plan') } } catch { [void]$problems.Add('power plan: ' + $_.Exception.Message) }

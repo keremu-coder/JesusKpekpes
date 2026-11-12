@@ -38,6 +38,9 @@ jobs:
         run: |
           $env:TUNE_PIPE = (Resolve-Path plugin\tunecheck.exe).Path
           dotnet run --project tests/EngineTests.csproj -c Release
+      - name: Logic tests
+        shell: pwsh
+        run: pwsh pc/tests/Test-Logic.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: JesusKpekpesTune

@@ -603,6 +603,8 @@ function Invoke-KRevert {
                     [void]$manual.Add('System Protection was off before this tool ran. It was left ON so your restore point stays usable. Turn it off in System Properties > System Protection if you want (that deletes restore points).')
                 }
             }
+            elseif ($t -eq 'display') { $ok = Restore-DisplayEntry $e }
+            elseif ($t -eq 'startup') { $ok = Restore-StartupEntry $e }
             elseif ($t -eq 'fsutil') { & fsutil.exe behavior set ([string]$e.Name) ([string]$e.Value) | Out-Null; $ok = ($LASTEXITCODE -eq 0) }
             elseif ($t -eq 'nicprop') { $ok = Restore-NicPropEntry $e }
             elseif ($t -eq 'nicstate') { $ok = Restore-NicStateEntry $e }
