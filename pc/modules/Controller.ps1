@@ -278,7 +278,7 @@ function Get-ControllerVerifyResults {
     }
     # the folder the scheduled task runs from must not be writable by normal users
     try {
-        $acl = Get-Acl -LiteralPath $d.Bin
+        $acl = Get-Acl -LiteralPath $d.Bin -ErrorAction Stop
         $bad = @($acl.Access | Where-Object { $_.IdentityReference.Value -match '(?i)\\Users$|Everyone|Authenticated Users' -and $_.AccessControlType -eq 'Allow' -and $_.FileSystemRights.ToString() -match 'Write|Modify|FullControl' })
         if ($bad.Count -eq 0) { [void]$r.Add((New-KResult 'Script folder locked against edits by normal users' 'PASS' '' $g)) }
         else { [void]$r.Add((New-KResult 'Script folder locked against edits by normal users' 'FAIL' 'normal users can write there' $g)) }

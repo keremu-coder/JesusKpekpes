@@ -22,7 +22,25 @@ static class AudioKit
             ]),
     ];
 
-    public static bool Installed(Tool tool) => tool.Folders.Any(Directory.Exists);
+    public static bool Installed(Tool tool) =>
+        tool.Name == "Equalizer APO" ? ApoRoot() is not null : tool.Folders.Any(Directory.Exists);
+
+    /// <summary>Where Equalizer APO is installed: the registry first (it can be on another drive), then Program Files.</summary>
+    public static string? ApoRoot()
+    {
+        foreach (var view in new[] { Microsoft.Win32.RegistryView.Registry64, Microsoft.Win32.RegistryView.Registry32 })
+        {
+            try
+            {
+                using var baseKey = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, view);
+                using var key = baseKey.OpenSubKey(@"SOFTWARE\EqualizerAPO");
+                if (key?.GetValue("InstallPath") is string path && Directory.Exists(Path.Combine(path, "config"))) return path;
+            }
+            catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException) { }
+        }
+        var normal = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "EqualizerAPO");
+        return Directory.Exists(Path.Combine(normal, "config")) ? normal : null;
+    }
 
     public static void Open(Tool tool) =>
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool.Url) { UseShellExecute = true });
@@ -54,21 +72,39 @@ static class CodFind
 
 static class NetCheck
 {
+    public static string Verdict(long idleMs, long loadMs, bool sampleFinished)
+    {
+        if (idleMs < 0) return "No answer from the internet at all. Check that you are online, then try again.";
+        var text = new System.Text.StringBuilder();
+        text.Append("Delay to the internet when nothing else is happening: ").Append(idleMs).AppendLine(" ms.");
+        text.AppendLine(idleMs switch
+        {
+            < 40 => "That is very good for online games.",
+            < 80 => "That is fine for online games.",
+            < 150 => "That is high. You will feel it in online games. A network cable instead of Wi-Fi usually helps most.",
+            _ => "That is too high for smooth online play. This is your internet line or Wi-Fi, not your PC, so no PC setting can fix it. Try a cable, sit closer to the router, or ask your internet provider.",
+        });
+        if (loadMs >= 0)
+            text.Append("Delay while a download was running: ").Append(loadMs).AppendLine(" ms.")
+                .AppendLine(loadMs > idleMs + 60
+                    ? "It got worse while data was moving. If someone streams or downloads while you play, you will lag."
+                    : "It did not get worse while data was moving. Good.");
+        if (!sampleFinished)
+            text.AppendLine("A small test download did not finish in time, so your connection is slow. That is another sign the line is the limit.");
+        text.Append("This is a short check, not a lab test.");
+        return text.ToString();
+    }
+
     public static async Task<string> Run()
     {
         var idle = await Times();
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
-        var download = client.GetByteArrayAsync("https://speed.cloudflare.com/__down?bytes=8000000");
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var download = client.GetByteArrayAsync("https://speed.cloudflare.com/__down?bytes=4000000");
         var loaded = await Times();
-        var note = "";
+        var finished = true;
         try { await download; }
-        catch (Exception ex) { note = "\r\nThe load sample did not finish: " + ex.Message; }
-        var idleMs = Median(idle);
-        var loadMs = Median(loaded);
-        var verdict = loadMs > idleMs + 40
-            ? "The line got slower while data was moving."
-            : "The line stayed close while data was moving.";
-        return "Idle " + idleMs + " ms. Under load " + loadMs + " ms.\r\n" + verdict + "\r\nThis is a short check, not a lab test." + note;
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { finished = false; }
+        return Verdict(Median(idle), Median(loaded), finished).Replace("\r\n", "\n").Replace("\n", "\r\n");
     }
 
     static async Task<List<long>> Times()
@@ -82,7 +118,7 @@ static class NetCheck
                 var reply = await ping.SendPingAsync("1.1.1.1", 1000);
                 if (reply.Status == System.Net.NetworkInformation.IPStatus.Success) times.Add(reply.RoundtripTime);
             }
-            catch { }
+            catch (System.Net.NetworkInformation.PingException) { }
         }
         return times;
     }

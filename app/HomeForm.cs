@@ -25,12 +25,47 @@ sealed class HomeForm : Form
             ForeColor = Color.FromArgb(180, 184, 198),
             Bounds = new Rectangle(28, 78, 404, 70),
         };
-        var audio = Button("Audio tune", 150, () => new GuideForm(false).Show());
-        var pc = Button("Optimize the PC", 214, () => new PcForm().Show());
-        var programs = Button("Get the audio programs", 278, () => new ProgramsForm().ShowDialog(this));
-        var cod = Button("Call of Duty settings", 342, () => new CodForm().Show());
-        var check = Button("Sound check (compare two tunes)", 406, () => new SoundCheckForm().Show());
+        var audio = Button("Audio tune", 150, () => Open(ref _audio, () => new GuideForm(false)));
+        var pc = Button("Optimize the PC", 214, () => Open(ref _pc, () => new PcForm()));
+        var programs = Button("Get the audio programs", 278, () => { Open(ref _programs, () => new ProgramsForm()); });
+        var cod = Button("Call of Duty settings", 342, () => Open(ref _cod, () => new CodForm()));
+        var check = Button("Sound check (compare two tunes)", 406, () => Open(ref _check, () => new SoundCheckForm()));
         Controls.AddRange([title, body, audio, pc, programs, cod, check]);
+        // The audio tune cannot work without Equalizer APO. Offer it once per start, only when it is missing.
+        Shown += (_, _) =>
+        {
+            if (AudioKit.Installed(AudioKit.Tools[0])) return;
+            BeginInvoke(() =>
+            {
+                var form = Open(ref _programs, () => new ProgramsForm());
+                ((ProgramsForm)form).StartAll();
+            });
+        };
+    }
+
+    Form? _audio, _pc, _programs, _cod, _check;
+
+    // One window of each kind. Pressing the button again brings the open one forward instead of stacking another.
+    T Open<T>(ref T? slot, Func<T> make) where T : Form
+    {
+        if (slot is { IsDisposed: false } open)
+        {
+            if (!open.Visible) open.Show();
+            if (open.WindowState == FormWindowState.Minimized) open.WindowState = FormWindowState.Normal;
+            open.Activate();
+            return open;
+        }
+        var form = make();
+        slot = form;
+        form.Show(this);
+        return form;
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        foreach (var form in new[] { _audio, _pc, _programs, _cod, _check })
+            if (form is { IsDisposed: false }) form.Dispose();
+        base.OnFormClosed(e);
     }
 
     static Button Button(string text, int y, Action click)
@@ -52,6 +87,10 @@ sealed class HomeForm : Form
 sealed class ProgramsForm : Form
 {
     readonly Label _status = new();
+    readonly ProgressBar _bar = new();
+    readonly Button _all = new();
+    readonly List<Button> _gets = [];
+    bool _busy;
 
     public ProgramsForm()
     {
@@ -59,14 +98,19 @@ sealed class ProgramsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(520, 460);
+        ClientSize = new Size(520, 520);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 10f);
-        _status.SetBounds(20, 16, 480, 70);
+        _status.SetBounds(20, 12, 480, 64);
         _status.ForeColor = Color.FromArgb(180, 184, 198);
         Controls.Add(_status);
-        var y = 96;
+        _bar.SetBounds(20, 80, 480, 12);
+        _bar.Style = ProgressBarStyle.Marquee;
+        _bar.MarqueeAnimationSpeed = 30;
+        _bar.Visible = false;
+        Controls.Add(_bar);
+        var y = 104;
         foreach (var tool in AudioKit.Tools)
         {
             var row = tool;
@@ -85,29 +129,31 @@ sealed class ProgramsForm : Form
             {
                 var get = new Button
                 {
-                    Text = "Download + open",
+                    Text = "Download + install",
                     Bounds = new Rectangle(360, y + 32, 140, 30),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = Color.FromArgb(40, 120, 80),
                     ForeColor = Color.White,
                 };
                 get.FlatAppearance.BorderSize = 0;
-                get.Click += async (_, _) =>
-                {
-                    get.Enabled = false;
-                    _status.Text = "Downloading " + row.Name + " and checking it...";
-                    var message = await Installer.Fetch(row.Name);
-                    _status.Text = message;
-                    get.Enabled = true;
-                };
+                get.Click += async (_, _) => await Install([row.Name]);
                 Controls.Add(get);
+                _gets.Add(get);
             }
             y += 72;
         }
+        _all.Text = "Install what is missing";
+        _all.Bounds = new Rectangle(20, 460, 240, 40);
+        _all.FlatStyle = FlatStyle.Flat;
+        _all.BackColor = Color.FromArgb(40, 120, 80);
+        _all.ForeColor = Color.White;
+        _all.FlatAppearance.BorderSize = 0;
+        _all.Click += async (_, _) => await InstallMissing();
+        Controls.Add(_all);
         var again = new Button
         {
             Text = "Check again",
-            Bounds = new Rectangle(20, 400, 160, 40),
+            Bounds = new Rectangle(280, 460, 160, 40),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(88, 101, 242),
             ForeColor = Color.White,
@@ -118,13 +164,59 @@ sealed class ProgramsForm : Form
         RefreshStatus();
     }
 
-    void RefreshStatus()
+    /// <summary>Starts the download of everything that is missing without waiting for a click.</summary>
+    public void StartAll() => _ = InstallMissing();
+
+    Task InstallMissing()
     {
-        var lines = new System.Text.StringBuilder();
-        lines.AppendLine("Install what is missing, then press Check again. Download + open checks the file first, then opens the vendor setup for you to click through.");
+        var missing = AudioKit.Tools.Where(t => Installer.CanInstall(t.Name) && !AudioKit.Installed(t)).Select(t => t.Name).ToList();
+        if (missing.Count == 0)
+        {
+            RefreshStatus("Everything we can install for you is already installed.");
+            return Task.CompletedTask;
+        }
+        return Install(missing);
+    }
+
+    async Task Install(List<string> names)
+    {
+        if (_busy) return;
+        _busy = true;
+        _all.Enabled = false;
+        foreach (var get in _gets) get.Enabled = false;
+        _bar.Visible = true;
+        try
+        {
+            var done = new System.Text.StringBuilder();
+            var progress = new Progress<string>(text => _status.Text = text);
+            foreach (var name in names)
+            {
+                var message = await Installer.Fetch(name, progress, question =>
+                    MessageBox.Show(this, question, "Unchecked file", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes);
+                done.AppendLine(name + ": " + message);
+                _status.Text = done.ToString();
+                if (names.Count > 1 && name != names[^1])
+                {
+                    _status.Text = done + "Finish that setup. The next one starts when this one is closed.";
+                    await Task.Delay(1500);
+                }
+            }
+            RefreshStatus(done.ToString().Trim());
+        }
+        finally
+        {
+            _bar.Visible = false;
+            _all.Enabled = true;
+            foreach (var get in _gets) get.Enabled = true;
+            _busy = false;
+        }
+    }
+
+    void RefreshStatus(string? message = null)
+    {
         var labels = Controls.OfType<Label>().Where(l => l != _status).ToList();
         foreach (var label in labels) Controls.Remove(label);
-        var y = 96;
+        var y = 104;
         foreach (var tool in AudioKit.Tools)
         {
             var have = AudioKit.Installed(tool);
@@ -137,6 +229,6 @@ sealed class ProgramsForm : Form
             Controls.Add(label);
             y += 72;
         }
-        _status.Text = lines.ToString();
+        _status.Text = message ?? "Press Install what is missing. It downloads, checks, then opens each setup for you. After Equalizer APO, restart Windows.";
     }
 }

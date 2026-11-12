@@ -155,9 +155,5 @@ static class InPlace
         return text;
     }
 
-    static string? ConfigDir()
-    {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "EqualizerAPO", "config");
-        return Directory.Exists(dir) ? dir : null;
-    }
+    static string? ConfigDir() => AudioKit.ApoRoot() is { } root ? Path.Combine(root, "config") : null;
 }
