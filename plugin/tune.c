@@ -200,14 +200,6 @@ static float transient_gain(float fast, float ratio, float max_db) {
     return powf(10.f, db / 20.f);
 }
 
-static float aside(float gain) {
-    float t;
-    if (gain <= 1.02f) return 1.f;
-    t = (gain - 1.f) / 2.5f;
-    if (t > 1.f) t = 1.f;
-    return powf(10.f, -10.f * t / 20.f);
-}
-
 static void consider(float fast, float slow, float* best_fast, float* best_ratio) {
     float ratio = fast / (slow + 1e-5f);
     if (fast > *best_fast) *best_fast = fast;
@@ -246,21 +238,17 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
         }
         weight_gain = transient_gain(best_w_fast, best_w_ratio, max_weight);
         tick_gain = transient_gain(best_t_fast, best_t_ratio, max_tick);
-        {
-            float punch = weight_gain > tick_gain ? weight_gain : tick_gain;
-            float duck = aside(punch);
-            for (ch = 0; ch < nch; ch++) {
-                Lane* lane;
-                float gun_gain, y, mag;
-                if (!inputs[ch] || !outputs[ch]) continue;
-                lane = &bank->lane[ch];
-                gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
-                y = other_b[ch] * duck + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
-                mag = fabsf(y);
-                if (mag > 0.8912509f)
-                    y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
-                outputs[ch][i] = y;
-            }
+        for (ch = 0; ch < nch; ch++) {
+            Lane* lane;
+            float gun_gain, y, mag;
+            if (!inputs[ch] || !outputs[ch]) continue;
+            lane = &bank->lane[ch];
+            gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+            y = other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
+            mag = fabsf(y);
+            if (mag > 0.8912509f)
+                y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
+            outputs[ch][i] = y;
         }
     }
 }
