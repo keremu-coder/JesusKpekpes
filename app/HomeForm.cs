@@ -60,7 +60,15 @@ sealed class HomeForm : Form
 
     void Open(Form form)
     {
-        using (form) form.ShowDialog(this);
+        Hide();
+        try
+        {
+            using (form) form.ShowDialog();
+        }
+        finally
+        {
+            if (!_quit && !IsDisposed) Reveal();
+        }
     }
 
     void Reveal()
