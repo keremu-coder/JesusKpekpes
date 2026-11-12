@@ -86,6 +86,7 @@ sealed class GuideForm : Form
         _keep.Visible = false;
         _preset.SelectedIndexChanged += (_, _) => { RefreshRoute(); ScheduleSave(); };
         _seven.CheckedChanged += (_, _) => { RefreshRoute(); ScheduleSave(); };
+        _keep.CheckedChanged += (_, _) => ScheduleSave();
         _save.Tick += (_, _) => { _save.Stop(); if (_on && Selected is not null) TurnOn(); };
 
         Style(_back, "Back", 28, 492, 120);
@@ -94,8 +95,8 @@ sealed class GuideForm : Form
         _next.Click += (_, _) => OnNext();
 
         Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _level, _keep, _back, _next]);
-        ShowPage(0);
-        if (_resume) BeginInvoke(TryResume);
+        Restore();
+        _loading = false;
     }
 
     AudioDevice? Selected => _list.SelectedItem as AudioDevice;
@@ -154,6 +155,7 @@ sealed class GuideForm : Form
         if (_page < 2)
         {
             if (_page == 0 && Selected is null) return;
+            Remember(Selected?.Id, _on);
             ShowPage(_page + 1);
             return;
         }
@@ -163,6 +165,7 @@ sealed class GuideForm : Form
     }
 
     bool _on;
+    bool _loading = true;
 
     void RefreshRoute()
     {
@@ -181,11 +184,34 @@ sealed class GuideForm : Form
 
     void ScheduleSave()
     {
+        if (_loading) return;
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
-        if (!_on) return;
+        if (Selected is null) return;
+        if (!_on)
+        {
+            Remember(Selected.Id, false);
+            return;
+        }
         _save.Stop();
         _save.Start();
+    }
+
+    void Restore()
+    {
+        var saved = Remembered();
+        var phones = _devices.FirstOrDefault(d => d.Id == saved.Headphones);
+        if (phones is null)
+        {
+            ShowPage(0);
+            return;
+        }
+        _list.SelectedItem = phones;
+        if (saved.On == true)
+            _on = InPlace.Apply(phones.Id, Current(phones.Name), _keep.Checked) is WriteResult.On or WriteResult.NotAttached;
+        ShowPage(2);
+        _next.Text = _on ? "Turn off" : "Turn on";
+        if (_on) _body.Text = $"On. {phones.Name} is remembered. Closing this window leaves the tune on.";
     }
 
     MixPlan Current(string name) => new(
@@ -363,6 +389,7 @@ sealed class GuideForm : Form
             "preset=" + (_preset.SelectedIndex == 2 ? "nova" : _preset.SelectedIndex == 1 ? "well" : "drop"),
             "route=" + (_seven.Checked ? "surround" : "stereo"),
             "level=" + Math.Clamp(_level.SelectedIndex, 0, 2),
+            "keep=" + (_keep.Checked ? "1" : "0"),
             "v=2",
         ]);
     }
@@ -384,6 +411,7 @@ sealed class GuideForm : Form
         if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "nova" ? 2 : preset == "well" ? 1 : 0;
         if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
         if (current && map.TryGetValue("level", out var level) && int.TryParse(level, out var levelValue)) _level.SelectedIndex = Math.Clamp(levelValue, 0, 2);
+        if (map.TryGetValue("keep", out var keep)) _keep.Checked = keep != "0";
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
         return (headphones, on == "1");
