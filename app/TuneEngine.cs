@@ -64,7 +64,7 @@ public static class TuneEngine
                 if (gunEnv[k] < 1e-20f) gunEnv[k] = 0f;
                 if (footEnv[k] > strongest) strongest = footEnv[k];
             }
-            var liftDb = 6f - Reduction(strongest, -20f, 0.5f);
+            var liftDb = 10f - Reduction(strongest, -20f, 1f);
             var footGain = liftDb > 0f ? MathF.Pow(10f, liftDb / 20f) : 1f;
             for (var k = 0; k < count; k++)
             {

@@ -13,7 +13,7 @@ sealed class GuideForm : Form
     readonly Button _next = new();
     readonly Button _back = new();
     readonly CheckBox _seven = new();
-    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 60, TickFrequency = 25 };
+    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 80, TickFrequency = 25 };
     readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 50, TickFrequency = 25 };
     readonly Label _loudLabel = new();
     readonly Label _roomLabel = new();
@@ -78,7 +78,7 @@ sealed class GuideForm : Form
         _seven.SetBounds(230, 348, 160, 28);
         _keep.SetBounds(28, 400, 404, 28);
         _level.Items.AddRange(new object[] { "Safe (no extra boost)", "Balanced (louder)", "Loud (may distort)" });
-        _level.SelectedIndex = 0;
+        _level.SelectedIndex = 1;
         _level.SetBounds(28, 440, 260, 32);
         _level.Visible = false;
         _level.SelectedIndexChanged += (_, _) => ScheduleSave();
@@ -370,6 +370,7 @@ sealed class GuideForm : Form
             "preset=" + (_preset.SelectedIndex == 2 ? "nova" : _preset.SelectedIndex == 1 ? "well" : "drop"),
             "route=" + (_seven.Checked ? "surround" : "stereo"),
             "level=" + Math.Clamp(_level.SelectedIndex, 0, 2),
+            "v=2",
         ]);
     }
 
@@ -383,11 +384,13 @@ sealed class GuideForm : Form
             .ToDictionary(p => p[0], p => p[1]);
         map.TryGetValue("headphones", out var headphones);
         map.TryGetValue("on", out var on);
-        if (map.TryGetValue("hit", out var hit) && int.TryParse(hit, out var hitValue)) _loud.Value = Math.Clamp(hitValue, 0, 100);
+        // Settings saved before version 2 had the quieter footstep defaults. Start those people on the louder ones once.
+        var current = map.TryGetValue("v", out var version) && version == "2";
+        if (current && map.TryGetValue("hit", out var hit) && int.TryParse(hit, out var hitValue)) _loud.Value = Math.Clamp(hitValue, 0, 100);
         if (map.TryGetValue("quiet", out var quiet) && int.TryParse(quiet, out var quietValue)) _room.Value = Math.Clamp(quietValue, 0, 100);
         if (map.TryGetValue("preset", out var preset)) _preset.SelectedIndex = preset == "nova" ? 2 : preset == "well" ? 1 : 0;
         if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
-        if (map.TryGetValue("level", out var level) && int.TryParse(level, out var levelValue)) _level.SelectedIndex = Math.Clamp(levelValue, 0, 2);
+        if (current && map.TryGetValue("level", out var level) && int.TryParse(level, out var levelValue)) _level.SelectedIndex = Math.Clamp(levelValue, 0, 2);
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
         return (headphones, on == "1");
