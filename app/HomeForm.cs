@@ -178,7 +178,11 @@ sealed class ProgramsForm : Form
         _all.BackColor = Color.FromArgb(40, 120, 80);
         _all.ForeColor = Color.White;
         _all.FlatAppearance.BorderSize = 0;
-        _all.Click += async (_, _) => await InstallMissing();
+        _all.Click += async (_, _) =>
+        {
+            if (_all.Text == "Done") { Close(); return; }
+            await InstallMissing();
+        };
         Controls.Add(_all);
         var again = new Button
         {
@@ -215,7 +219,6 @@ sealed class ProgramsForm : Form
         _all.Enabled = false;
         foreach (var get in _gets) get.Enabled = false;
         _bar.Visible = true;
-        var close = false;
         try
         {
             var done = new System.Text.StringBuilder();
@@ -234,7 +237,8 @@ sealed class ProgramsForm : Form
             }
             RefreshStatus(done.ToString().Trim());
             var text = done.ToString();
-            close = !text.Contains("not opened") && !text.Contains("did not finish");
+            if (!text.Contains("not opened") && !text.Contains("did not finish"))
+                _all.Text = "Done";
         }
         finally
         {
@@ -243,7 +247,6 @@ sealed class ProgramsForm : Form
             foreach (var get in _gets) get.Enabled = true;
             _busy = false;
         }
-        if (close) Close();
     }
 
     void RefreshStatus(string? message = null)
