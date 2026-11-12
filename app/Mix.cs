@@ -292,13 +292,17 @@ static class Mix
             }
             return bands.ToArray();
         }
+        // Drop and Well: 500 Hz is trimmed so a room does not box the step in, and 3.4 kHz (shoe grit) is raised
+        // with the hit slider. The plugin adds the rest of the tick only while it is a hit.
         if (plan.Route == Route.Surround)
         {
             return
             [
                 new("L R", Shelf.Low, 90, -(4f + quiet * 3f), 0.7f),
                 new("L R", Shelf.None, 180, hit * 4f, 0.9f),
+                new("L R", Shelf.None, 500, -2f, 1.0f),
                 new("L R", Shelf.None, 1400, -(2f + quiet * 1.8f), 0.45f),
+                new("L R", Shelf.None, 3400, hit * 3f, 1.4f),
                 new("L R", Shelf.None, 7200, hit * 2.6f, 1.3f),
                 new("SL SR RL RR", Shelf.None, 0, -10f, 1f),
                 new("SL SR RL RR", Shelf.Low, 200, -(quiet * 8f), 0.7f),
@@ -310,7 +314,9 @@ static class Mix
             [
                 new("L R", Shelf.Low, 90, -(4f + quiet * 3f), 0.7f),
                 new("L R", Shelf.None, 160, hit * 4.5f, 0.8f),
+                new("L R", Shelf.None, 500, -1.5f, 1.0f),
                 new("L R", Shelf.None, 1400, -(2f + quiet * 1.2f), 0.5f),
+                new("L R", Shelf.None, 3400, hit * 2f, 1.4f),
                 new("L R", Shelf.None, 7200, hit * 1.5f, 1.2f),
             ];
         }
@@ -318,7 +324,9 @@ static class Mix
         [
             new("L R", Shelf.Low, 90, -(4f + quiet * 3f), 0.7f),
             new("L R", Shelf.None, 180, hit * 4f, 0.9f),
+            new("L R", Shelf.None, 500, -2f, 1.0f),
             new("L R", Shelf.None, 1400, -(2f + quiet * 1.8f), 0.45f),
+            new("L R", Shelf.None, 3400, hit * 3f, 1.4f),
             new("L R", Shelf.None, 7200, hit * 2.6f, 1.3f),
         ];
     }
