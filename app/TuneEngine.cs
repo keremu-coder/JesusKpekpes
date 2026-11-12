@@ -1,7 +1,8 @@
 namespace JesusKpekpes;
 
 // The text equalizer runs first, at the sample rate it is given.
-// This stage raises only the foot band, by the same amount in every ear. A gun is trimmed in its own band, on that ear alone.
+// This stage raises the foot band, and the step tick while it is a hit, by the same amount in every ear.
+// A gun is trimmed in its own band, on that ear alone.
 public static class TuneEngine
 {
     public static void Run(float[] left, float[] right, int sampleRate) =>
@@ -22,6 +23,8 @@ public static class TuneEngine
     /// <summary>
     /// The foot band gets one shared lift for all ears, taken from the strongest ear, so the loudness gap between the ears is kept.
     /// The lift only ever adds level (never below 1) and eases to 1 as the foot band gets loud. The gun trim stays on each ear alone.
+    /// The step tick (shoe grit, 3.4 kHz) gets up to +9 dB, one gain for all ears, only while it is a hit, so a steady tone is not lifted.
+    /// While a gun is being trimmed in any ear, the tick lift fades out, so a shot's crack is not sharpened.
     /// Mirrors plugin/tune.c.
     /// </summary>
     public static void CompressLinked(float[][] ears, int sampleRate)
@@ -34,42 +37,61 @@ public static class TuneEngine
         var footRelease = 1f - MathF.Exp(-1f / (rate * 0.100f));
         var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
         var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.045f));
+        var fastA = 1f - MathF.Exp(-1f / (rate * 0.0025f));
+        var fastR = 1f - MathF.Exp(-1f / (rate * 0.040f));
+        var slowA = 1f - MathF.Exp(-1f / (rate * 0.080f));
+        var slowR = 1f - MathF.Exp(-1f / (rate * 0.400f));
         var gun = new Bandpass[count];
         var foot = new Bandpass[count];
+        var tick = new Bandpass[count];
         for (var k = 0; k < count; k++)
         {
             gun[k] = Bandpass.Open(1400f, 0.6f, rate);
             foot[k] = Bandpass.Open(180f, 1.0f, rate);
+            tick[k] = Bandpass.Open(3400f, 1.4f, rate);
         }
         var footEnv = new float[count];
         var gunEnv = new float[count];
+        var tickFast = new float[count];
+        var tickSlow = new float[count];
         var gunBand = new float[count];
         var footBand = new float[count];
+        var tickBand = new float[count];
         var other = new float[count];
         const float ceiling = 0.8912509f;
         for (var i = 0; i < length; i++)
         {
             var strongest = 0f;
+            var bestTickFast = 0f;
+            var bestTickRatio = 1f;
+            var gunCut = 0f;
             for (var k = 0; k < count; k++)
             {
                 var x = ears[k][i];
                 gunBand[k] = gun[k].Tick(x);
                 footBand[k] = foot[k].Tick(x);
-                other[k] = x - gunBand[k] - footBand[k];
+                tickBand[k] = tick[k].Tick(x);
+                other[k] = x - gunBand[k] - footBand[k] - tickBand[k];
                 var footLevel = MathF.Abs(footBand[k]);
                 var gunLevel = MathF.Abs(gunBand[k]);
                 footEnv[k] += (footLevel - footEnv[k]) * (footLevel > footEnv[k] ? footAttack : footRelease);
                 gunEnv[k] += (gunLevel - gunEnv[k]) * (gunLevel > gunEnv[k] ? gunAttack : gunRelease);
                 if (footEnv[k] < 1e-20f) footEnv[k] = 0f;
                 if (gunEnv[k] < 1e-20f) gunEnv[k] = 0f;
+                Follow(ref tickFast[k], MathF.Abs(tickBand[k]), fastA, fastR);
+                Follow(ref tickSlow[k], MathF.Abs(tickBand[k]), slowA, slowR);
                 if (footEnv[k] > strongest) strongest = footEnv[k];
+                Consider(tickFast[k], tickSlow[k], ref bestTickFast, ref bestTickRatio);
+                var cut = Reduction(gunEnv[k], -16f, 2f / 3f);
+                if (cut > gunCut) gunCut = cut;
             }
             var liftDb = 10f - Reduction(strongest, -20f, 1f);
             var footGain = liftDb > 0f ? MathF.Pow(10f, liftDb / 20f) : 1f;
+            var tickGain = ClassicTickGain(bestTickFast, bestTickRatio, gunCut);
             for (var k = 0; k < count; k++)
             {
                 var gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
-                var y = other[k] + footBand[k] * footGain + gunBand[k] * gunGain;
+                var y = other[k] + footBand[k] * footGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
                 ears[k][i] = y;
@@ -165,7 +187,25 @@ public static class TuneEngine
 
     static float TransientGain(float fast, float ratio, float maxDb)
     {
-        if (maxDb <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 1f;
+        var db = TransientDb(fast, ratio, maxDb);
+        if (db <= 0f) return 1f;
+        return MathF.Pow(10f, db / 20f);
+    }
+
+    // Up to +9 dB while the tick is a hit. Fades out as the loudest gun trim reaches 4 dB.
+    static float ClassicTickGain(float fast, float ratio, float gunCutDb)
+    {
+        var guard = 1f - gunCutDb / 4f;
+        if (guard <= 0f) return 1f;
+        if (guard > 1f) guard = 1f;
+        var db = TransientDb(fast, ratio, 9f) * guard;
+        if (db <= 0f) return 1f;
+        return MathF.Pow(10f, db / 20f);
+    }
+
+    static float TransientDb(float fast, float ratio, float maxDb)
+    {
+        if (maxDb <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 0f;
         var novelty = 20f * MathF.Log10(ratio);
         if (novelty > 18f) novelty = 18f;
         var edge = novelty / 12f;
@@ -175,8 +215,8 @@ public static class TuneEngine
         if (quiet < 0.65f) quiet = 0.65f;
         if (quiet > 1f) quiet = 1f;
         var db = maxDb * quiet * edge;
-        if (db <= 0f) return 1f;
-        return MathF.Pow(10f, db / 20f);
+        if (db <= 0f) return 0f;
+        return db;
     }
 
     static int Rate(int sampleRate) => sampleRate >= 1000 ? sampleRate : 48000;

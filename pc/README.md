@@ -63,7 +63,9 @@ settings, Defender exclusions, scheduled tasks, files the tool created, and your
 restore is listed and the journal is kept so you can run Undo again.
 
 One exception: the Xbox / Game Bar apps are removed from Windows. Windows cannot bring a removed app back
-by itself, so Undo opens the Microsoft Store search for you to reinstall them.
+by itself, so Undo opens the Microsoft Store search for you to reinstall them. Once Game Bar is gone, the
+`ms-gamebar` and `ms-gamingoverlay` links get a hidden handler that does nothing, so Windows never shows
+"Get an app to open this link". Undo removes that handler, and it also steps aside on its own if Game Bar is reinstalled.
 
 A System Restore point is also created first. The module repairs the usual reasons it fails (shadow copy
 services, System Protection, storage size) and retries. If a restore point still cannot be made, the run
@@ -82,7 +84,7 @@ There is one profile: maximum. Each group can be switched off in `C:\ProgramData
 - **Network:** Nagle off, TCP tuned, wired-adapter power saving, interrupt moderation and flow control off, QoS tag for `cod.exe`.
 - **Services:** SysMain, DiagTrack, Windows Search and a few more disabled.
 - **Windows Update control:** no driver updates from Windows Update, no auto-reboot while you are logged in, no Store auto-download.
-- **Xbox apps removed**, Copilot / widgets / suggestions off. (Toast notifications off is opt-in: `DisableToastNotifications`, because it can hide Windows Security alerts.)
+- **Xbox apps and Game Bar removed** (kept on dual-CCD X3D chips), the ms-gamebar prompt silenced, Copilot / widgets / suggestions off. (Toast notifications off is opt-in: `DisableToastNotifications`, because it can hide Windows Security alerts.)
 - **Memory integrity / VBS / hypervisor off: opt-in only** (`HvciOff`, default false). Back up your BitLocker recovery key before turning it on.
 - **Game process:** High CPU and I/O priority entries for the game and DS4Windows, high-performance GPU preference, fullscreen optimizations off.
 - **Defender exclusions for exact paths** (the game, Battle.net, DS4Windows). Not bare file names.

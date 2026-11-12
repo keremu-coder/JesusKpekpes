@@ -485,10 +485,14 @@ function Invoke-PcGameProcess {
 }
 
 # ---------------- Xbox / Game Bar ----------------
-# XboxGamingOverlay is the app that owns the ms-gamebar link. Removing it makes Windows
-# ask "Get an app to open this ms-gamebar link" every time a game starts. It stays installed.
-# The registry above already turns the overlay and capture off.
-function Get-XboxPatterns { return @('*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*') }
+# Game Bar (XboxGamingOverlay) is removed with the other Xbox apps. Windows keeps the ms-gamebar and
+# ms-gamingoverlay links after that, and asks "Get an app to open this link" when a game or the
+# controller's Xbox button calls them. Those two links are given a hidden handler that does nothing,
+# so nobody sees that window. If Game Bar is installed again, the hidden handler steps aside.
+# On dual-CCD X3D chips Game Bar is kept: AMD's V-Cache driver needs it.
+function Get-XboxPatterns { return @('*Microsoft.XboxGamingOverlay*', '*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*') }
+
+function Get-KGameBarLinks { return @('ms-gamebar', 'ms-gamingoverlay') }
 
 function Test-KGameBarNeedsQuiet {
     param([bool]$OverlayInstalled)
@@ -500,33 +504,55 @@ function Get-KGameBarQuietCommand {
     return 'wscript.exe //B //Nologo "' + $VbsPath + '" "%1"'
 }
 
+function Test-KGameBarQuietHandler {
+    param([string]$Command)
+    return ([string]$Command) -match 'gamebar-quiet\.vbs'
+}
+
 function Repair-PcGameBarProtocol {
     $installed = $false
     try { $installed = [bool](Get-AppxPackage -Name 'Microsoft.XboxGamingOverlay' -ErrorAction SilentlyContinue) } catch { }
-    if (-not (Test-KGameBarNeedsQuiet $installed)) { return }
+    if (-not (Test-KGameBarNeedsQuiet $installed)) {
+        # Game Bar is back. Our hidden handler must not hide it, so it is taken off again.
+        foreach ($link in (Get-KGameBarLinks)) {
+            $root = 'HKCU:\Software\Classes\' + $link
+            $now = ''
+            try { $now = [string](Get-Item -LiteralPath ($root + '\shell\open\command') -ErrorAction SilentlyContinue).GetValue('') } catch { }
+            if ((Test-KGameBarQuietHandler $now) -and -not $script:WhatIfMode) {
+                try { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+            }
+        }
+        return
+    }
     if ($script:WhatIfMode) { Write-Say '  [what-if] would silence the ms-gamebar prompt' 'Yellow'; return }
     $dir = Join-Path $script:DataRoot 'pc'
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $vbs = Join-Path $dir 'gamebar-quiet.vbs'
     $cmd = Get-KGameBarQuietCommand $vbs
-    $commandKey = 'HKCU:\Software\Classes\ms-gamebar\shell\open\command'
-    $now = ''
-    try { $now = [string](Get-Item -LiteralPath $commandKey -ErrorAction SilentlyContinue).GetValue('') } catch { }
-    if ((Test-Path -LiteralPath $vbs) -and $now -eq $cmd) { return }
     if (-not (Test-Path -LiteralPath $vbs)) {
         [void](Add-KEntry ('file|' + $vbs) @{ Type = 'file'; Path = $vbs })
         [IO.File]::WriteAllText($vbs, "' Stops Windows asking for an app to open ms-gamebar.`r`n")
     }
-    [void](Set-KReg 'HKCU:\Software\Classes\ms-gamebar' '' 'URL:ms-gamebar' 'String')
-    [void](Set-KReg 'HKCU:\Software\Classes\ms-gamebar' 'URL Protocol' '' 'String')
-    [void](Set-KReg $commandKey '' $cmd 'String')
-    Write-Say '  the ms-gamebar prompt is silenced' 'Green'
+    $changed = $false
+    foreach ($link in (Get-KGameBarLinks)) {
+        $root = 'HKCU:\Software\Classes\' + $link
+        $commandKey = $root + '\shell\open\command'
+        $now = ''
+        try { $now = [string](Get-Item -LiteralPath $commandKey -ErrorAction SilentlyContinue).GetValue('') } catch { }
+        if ($now -eq $cmd) { continue }
+        [void](Set-KReg $root '' ('URL:' + $link) 'String')
+        [void](Set-KReg $root 'URL Protocol' '' 'String')
+        [void](Set-KReg $root 'NoOpenWith' '' 'String')
+        [void](Set-KReg $commandKey '' $cmd 'String')
+        $changed = $true
+    }
+    if ($changed) { Write-Say '  the ms-gamebar prompt is silenced' 'Green' }
 }
 
 function Invoke-PcXbox {
-    Repair-PcGameBarProtocol
     if (-not (Get-PcCpuPolicy).RemoveGameBar) {
         Write-Say ('  kept (' + (Get-PcCpuPolicy).Reason + ')') 'DarkGray'
+        Repair-PcGameBarProtocol
         return
     }
     foreach ($pat in (Get-XboxPatterns)) {
@@ -539,6 +565,8 @@ function Invoke-PcXbox {
             if (-not $script:WhatIfMode) { try { Remove-AppxProvisionedPackage -Online -PackageName $prov.PackageName -ErrorAction SilentlyContinue | Out-Null } catch { } }
         }
     }
+    # After the removal, so the link that Game Bar owned is silenced in this same run.
+    Repair-PcGameBarProtocol
 }
 
 # ---------------- services ----------------
@@ -784,6 +812,14 @@ public static extern int NtQueryTimerResolution(out uint MinimumResolution, out 
             $label = 'Removed: ' + ($pat -replace '\*', '')
             if (Get-AppxPackage -AllUsers $pat -ErrorAction SilentlyContinue) { [void]$r.Add((New-KResult $label 'FAIL' 'still installed' 'Xbox apps')) }
             else { [void]$r.Add((New-KResult $label 'PASS' '' 'Xbox apps')) }
+        }
+        if (-not (Get-AppxPackage -Name 'Microsoft.XboxGamingOverlay' -ErrorAction SilentlyContinue)) {
+            foreach ($link in (Get-KGameBarLinks)) {
+                $now = ''
+                try { $now = [string](Get-Item -LiteralPath ('HKCU:\Software\Classes\' + $link + '\shell\open\command') -ErrorAction SilentlyContinue).GetValue('') } catch { }
+                if (Test-KGameBarQuietHandler $now) { [void]$r.Add((New-KResult ($link + ' prompt silenced') 'PASS' '' 'Xbox apps')) }
+                else { [void]$r.Add((New-KResult ($link + ' prompt silenced') 'FAIL' 'Windows may ask for an app' 'Xbox apps')) }
+            }
         }
     }
 
