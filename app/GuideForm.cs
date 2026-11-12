@@ -16,6 +16,9 @@ sealed class GuideForm : Form
     readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 80, TickFrequency = 25 };
     readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 50, TickFrequency = 25 };
     readonly Label _loudLabel = new();
+    readonly CheckBox _boost = new();
+    readonly Label _powerLabel = new();
+    readonly TrackBar _power = new() { Minimum = 0, Maximum = 100, Value = 75, TickFrequency = 25 };
     readonly Label _roomLabel = new();
     readonly ComboBox _preset = new() { DropDownStyle = ComboBoxStyle.DropDownList };
     readonly ComboBox _level = new() { DropDownStyle = ComboBoxStyle.DropDownList };
@@ -37,7 +40,7 @@ sealed class GuideForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 560);
+        ClientSize = new Size(460, 650);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 11f);
@@ -81,6 +84,18 @@ sealed class GuideForm : Form
         _level.SetBounds(28, 440, 260, 32);
         _level.Visible = false;
         _level.SelectedIndexChanged += (_, _) => ScheduleSave();
+        _boost.Text = "Boost step (AI helper). Off = your normal audio.";
+        _boost.SetBounds(28, 486, 404, 28);
+        _boost.ForeColor = Color.FromArgb(242, 243, 245);
+        _powerLabel.SetBounds(28, 516, 404, 22);
+        _power.SetBounds(28, 538, 404, 40);
+        _power.Enabled = false;
+        ShowPower();
+        _boost.Visible = false;
+        _powerLabel.Visible = false;
+        _power.Visible = false;
+        _boost.CheckedChanged += (_, _) => { _power.Enabled = _boost.Checked; ShowPower(); ScheduleSave(); };
+        _power.Scroll += (_, _) => { ShowPower(); ScheduleSave(); };
         _preset.Visible = false;
         _seven.Visible = false;
         _keep.Visible = false;
@@ -89,8 +104,8 @@ sealed class GuideForm : Form
         _keep.CheckedChanged += (_, _) => ScheduleSave();
         _save.Tick += (_, _) => { _save.Stop(); if (_on && Selected is not null) TurnOn(); };
 
-        Style(_back, "Back", 28, 492, 120);
-        Style(_next, "Next", 252, 492, 180);
+        Style(_back, "Back", 28, 592, 120);
+        Style(_next, "Next", 252, 592, 180);
         _back.Click += (_, _) =>
         {
             if (_offerDone) TurnOff();
@@ -102,7 +117,7 @@ sealed class GuideForm : Form
             else OnNext();
         };
 
-        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _level, _keep, _back, _next]);
+        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _preset, _seven, _level, _boost, _powerLabel, _power, _keep, _back, _next]);
         Restore();
         _loading = false;
     }
@@ -124,6 +139,9 @@ sealed class GuideForm : Form
         _seven.Visible = mix;
         _keep.Visible = mix;
         _level.Visible = mix;
+        _boost.Visible = mix;
+        _powerLabel.Visible = mix;
+        _power.Visible = mix;
         _seven.Enabled = Selected is { Channels: >= 8 };
         if (!_seven.Enabled && _seven.Checked) _seven.Checked = false;
         StopPreview();
@@ -244,7 +262,11 @@ sealed class GuideForm : Form
         _loud.Value,
         _room.Value,
         name,
-        (Level)Math.Clamp(_level.SelectedIndex, 0, 2));
+        (Level)Math.Clamp(_level.SelectedIndex, 0, 2),
+        _boost.Checked,
+        _power.Value);
+
+    void ShowPower() => _powerLabel.Text = _boost.Checked ? "Boost power  " + _power.Value + "  (steps only, nothing else is lowered)" : "Boost power  (turn Boost step on to use it)";
 
     void TurnOn()
     {
@@ -421,6 +443,8 @@ sealed class GuideForm : Form
             "route=" + (_seven.Checked ? "surround" : "stereo"),
             "level=" + Math.Clamp(_level.SelectedIndex, 0, 2),
             "keep=" + (_keep.Checked ? "1" : "0"),
+            "boost=" + (_boost.Checked ? "1" : "0"),
+            "power=" + _power.Value,
             "v=2",
         ]);
     }
@@ -443,6 +467,10 @@ sealed class GuideForm : Form
         if (map.TryGetValue("route", out var route)) _seven.Checked = route == "surround";
         if (current && map.TryGetValue("level", out var level) && int.TryParse(level, out var levelValue)) _level.SelectedIndex = Math.Clamp(levelValue, 0, 2);
         if (map.TryGetValue("keep", out var keep)) _keep.Checked = keep != "0";
+        if (map.TryGetValue("power", out var power) && int.TryParse(power, out var powerValue)) _power.Value = Math.Clamp(powerValue, 0, 100);
+        _boost.Checked = map.TryGetValue("boost", out var boost) && boost == "1";
+        _power.Enabled = _boost.Checked;
+        ShowPower();
         _loudLabel.Text = "Footstep hit  " + _loud.Value;
         _roomLabel.Text = "Surround quiet  " + _room.Value;
         return (headphones, on == "1");
