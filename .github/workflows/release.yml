@@ -22,7 +22,7 @@ jobs:
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS=%%i
           call "%VS%\VC\Auxiliary\Build\vcvars64.bat"
           cl /nologo /LD /O2 /Brepro /Fe:plugin\JesusKpekpesTune.dll plugin\tune.c /link /Brepro
-          cl /nologo /std:c11 /O2 /DTUNE_CHECK /Fe:plugin\tunecheck.exe plugin\tunecheck.c
+          cl /nologo /std:c11 /O2 /DTUNE_CHECK /Fe:plugin\tunecheck.exe plugin\tune.c
           plugin\tunecheck.exe
       - name: Compare the C plugin with the C# preview
         shell: pwsh
