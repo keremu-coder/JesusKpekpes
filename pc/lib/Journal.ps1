@@ -160,7 +160,11 @@ function Set-KReg {
         # (you or Windows changed it afterwards) and reports it instead of silently overwriting your change.
         [void](Add-KEntry ('reg|' + $Path + '|' + $Name) @{ Type = 'reg'; Path = $Path; Name = $Name; Existed = $st.Existed; Kind = $st.Kind; Value = $saved; Wrote = (ConvertTo-JsonSafe $v $Kind); WroteKind = $Kind })
         if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
-        New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Kind -Value $v -Force -ErrorAction Stop | Out-Null
+        if ($Name -eq '') {
+            (Get-Item -LiteralPath $Path).SetValue('', $v)
+        } else {
+            New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Kind -Value $v -Force -ErrorAction Stop | Out-Null
+        }
         return $true
     } catch {
         Write-KLog ('registry write failed: ' + $Path + ' ' + $Name + ' : ' + $_.Exception.Message) 'WARN'
