@@ -99,11 +99,9 @@ public static class TuneEngine
         }
     }
 
-    /// <summary>
-    /// Nova Pro only. The weight band and the tick band are lifted while they are a hit, by one gain for every ear,
-    /// so the level gap between the ears stays. A steady tone in those bands is not lifted. The rest of the sound,
-    /// including the background, is not given that lift. A gun is still trimmed on the ear that has it.
-    /// </summary>
+    /// Nova Pro only. The weight band holds like a drum hit and the tick stays short. Both are lifted
+    /// only while they are a hit, by one gain for every ear. A steady tone is not lifted.
+    /// A gun is trimmed only on a front ear, and not at all while a step is the hit, so the step is not silenced.
     public static void ShapeNova(float[][] ears, int sampleRate, int hit)
     {
         var count = ears.Length;
@@ -115,10 +113,11 @@ public static class TuneEngine
         var maxTick = 16f * amount;
         var fastA = 1f - MathF.Exp(-1f / (rate * 0.0025f));
         var fastR = 1f - MathF.Exp(-1f / (rate * 0.040f));
+        var weightR = 1f - MathF.Exp(-1f / (rate * 0.080f));
         var slowA = 1f - MathF.Exp(-1f / (rate * 0.080f));
         var slowR = 1f - MathF.Exp(-1f / (rate * 0.400f));
         var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
-        var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.045f));
+        var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.122f));
         var weight = new Bandpass[count];
         var tick = new Bandpass[count];
         var gun = new Bandpass[count];
@@ -151,7 +150,7 @@ public static class TuneEngine
                 tickBand[k] = tick[k].Tick(x);
                 gunBand[k] = gun[k].Tick(x);
                 other[k] = x - weightBand[k] - tickBand[k] - gunBand[k];
-                Follow(ref weightFast[k], MathF.Abs(weightBand[k]), fastA, fastR);
+                Follow(ref weightFast[k], MathF.Abs(weightBand[k]), fastA, weightR);
                 Follow(ref weightSlow[k], MathF.Abs(weightBand[k]), slowA, slowR);
                 Follow(ref tickFast[k], MathF.Abs(tickBand[k]), fastA, fastR);
                 Follow(ref tickSlow[k], MathF.Abs(tickBand[k]), slowA, slowR);
@@ -163,7 +162,9 @@ public static class TuneEngine
             var tickGain = TransientGain(bestTickFast, bestTickRatio, maxTick);
             for (var k = 0; k < count; k++)
             {
-                var gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
+                var gunGain = 1f;
+                if ((count <= 2 || k < 3) && weightGain < 1.15f && tickGain < 1.15f)
+                    gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
                 var y = other[k] + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);

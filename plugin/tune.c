@@ -78,7 +78,7 @@ typedef struct {
     float foot_env, gun_env;
     float foot_attack, foot_release, gun_attack, gun_release;
     float weight_fast, weight_slow, tick_fast, tick_slow;
-    float fast_a, fast_r, slow_a, slow_r;
+    float fast_a, fast_r, weight_r, slow_a, slow_r;
 } Lane;
 
 typedef struct {
@@ -189,10 +189,11 @@ static void arm_nova(Lane* lane, float rate) {
     set_band(&lane->tick, 3200.f, 1.1f, rate);
     lane->fast_a = 1.f - expf(-1.f / (rate * 0.0025f));
     lane->fast_r = 1.f - expf(-1.f / (rate * 0.040f));
+    lane->weight_r = 1.f - expf(-1.f / (rate * 0.080f));
     lane->slow_a = 1.f - expf(-1.f / (rate * 0.080f));
     lane->slow_r = 1.f - expf(-1.f / (rate * 0.400f));
     lane->gun_attack = 1.f - expf(-1.f / (rate * 0.003f));
-    lane->gun_release = 1.f - expf(-1.f / (rate * 0.045f));
+    lane->gun_release = 1.f - expf(-1.f / (rate * 0.122f));
 }
 
 /* One gain for every ear. A steady band (ratio near 1) stays at 1.
@@ -258,7 +259,7 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
             tick_b[ch] = t;
             gun_b[ch] = g;
             other_b[ch] = x - w - t - g;
-            follow(&lane->weight_fast, fabsf(w), lane->fast_a, lane->fast_r);
+            follow(&lane->weight_fast, fabsf(w), lane->fast_a, lane->weight_r);
             follow(&lane->weight_slow, fabsf(w), lane->slow_a, lane->slow_r);
             follow(&lane->tick_fast, fabsf(t), lane->fast_a, lane->fast_r);
             follow(&lane->tick_slow, fabsf(t), lane->slow_a, lane->slow_r);
@@ -273,7 +274,11 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
             float gun_gain, y, mag;
             if (!inputs[ch] || !outputs[ch]) continue;
             lane = &bank->lane[ch];
-            gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+            /* A shot is ducked only in front, and never while a step is the hit.
+               The step's own bands are not part of that duck, so the drum is not silenced. */
+            gun_gain = 1.f;
+            if ((nch <= 2 || ch < 3) && weight_gain < 1.15f && tick_gain < 1.15f)
+                gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
             y = other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
             mag = fabsf(y);
             if (mag > 0.8912509f)
