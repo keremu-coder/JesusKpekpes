@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "step_model.h"
 
 #if defined(_WIN32)
 #define EXPORT __declspec(dllexport)
@@ -81,11 +82,24 @@ typedef struct {
     float fast_a, fast_r, weight_r, slow_a, slow_r;
 } Lane;
 
+/* Boost step. A small learned detector listens for footsteps and, only while one is playing, lifts the sound.
+   Its features and its weights come from ai/features.py and ai/train.py. It is off until the host sets Boost. */
+enum { STEP_BANDS = 12, STEP_LAG = 3 };
+typedef struct {
+    Stage band[STEP_BANDS];
+    float acc[STEP_BANDS], slow[STEP_BANDS], hist[STEP_LAG][STEP_BANDS];
+    float slow_rate, atk, rel, gain, prob;
+    int hop, count, pos;
+} Step;
+
 typedef struct {
     Lane lane[8];
+    Step step;
     float rate;
     float hit;
+    float power;
     int mode;
+    int boost;
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
@@ -288,7 +302,118 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
     }
 }
 
+static void step_arm(Step* st, float rate) {
+    int i, j;
+    if (rate < 1000.f) rate = 48000.f;
+    memset(st, 0, sizeof *st);
+    for (i = 0; i < STEP_BANDS; i++) {
+        set_band(&st->band[i], 100.f * powf(76.f, (float)i / 11.f), 2.4f, rate);
+        st->slow[i] = -100.f;
+        for (j = 0; j < STEP_LAG; j++) st->hist[j][i] = -100.f;
+    }
+    st->hop = (int)(rate * 0.01f + 0.5f);
+    st->slow_rate = 1.f - expf(-10.f / 400.f);
+    st->atk = 1.f - expf(-1.f / (rate * 0.004f));
+    st->rel = 1.f - expf(-1.f / (rate * 0.150f));
+    st->gain = 1.f;
+}
+
+/* One mono sample in. Every 10 ms the probability that a footstep is playing is refreshed. */
+static void step_feed(Step* st, float x) {
+    int i;
+    for (i = 0; i < STEP_BANDS; i++) {
+        float y = tick(&st->band[i], x);
+        st->acc[i] += y * y;
+    }
+    if (++st->count < st->hop) return;
+    {
+        float f[STEP_IN], h[STEP_HID], z;
+        int j, k;
+        for (i = 0; i < STEP_BANDS; i++) {
+            float level = 10.f * log10f(st->acc[i] / (float)st->hop + 1e-10f);
+            st->slow[i] += st->slow_rate * (level - st->slow[i]);
+            f[i] = level;
+            f[STEP_BANDS + i] = level - st->slow[i];
+            f[2 * STEP_BANDS + i] = level - st->hist[st->pos][i];
+            st->hist[st->pos][i] = level;
+            st->acc[i] = 0.f;
+        }
+        st->pos = (st->pos + 1) % STEP_LAG;
+        st->count = 0;
+        z = step_b2;
+        for (j = 0; j < STEP_HID; j++) {
+            float sum = step_b1[j];
+            for (k = 0; k < STEP_IN; k++) sum += step_w1[j * STEP_IN + k] * f[k];
+            h[j] = sum > 0.f ? sum : 0.f;
+            z += step_w2[j] * h[j];
+        }
+        st->prob = 1.f / (1.f + expf(-z));
+    }
+}
+
+/* The most a step is lifted: up to +16 dB at full power. Nothing happens below 50% sure, full lift from 90%. */
+static float step_target(const Step* st, float power, float guard) {
+    float t = (st->prob - 0.5f) / 0.4f;
+    if (t <= 0.f || power <= 0.f) return 1.f;
+    if (t > 1.f) t = 1.f;
+    return powf(10.f, 16.f * power * t * guard / 20.f);
+}
+
+static void replace_core(Effect* effect, float** inputs, float** outputs, i32 frames);
+
 static void replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
+    Bank* bank = effect ? effect->object : 0;
+    enum { chunk = 512 };
+    float gains[chunk];
+    i32 off, i, ch, nch;
+    if (!bank || !bank->boost) {
+        replace_core(effect, inputs, outputs, frames);
+        return;
+    }
+    if (frames < 1 || !inputs || !outputs) return;
+    nch = effect->inputs > 8 ? 8 : effect->inputs;
+    for (off = 0; off < frames; off += chunk) {
+        float* in[8] = { 0 };
+        float* out[8] = { 0 };
+        i32 n = frames - off < chunk ? frames - off : chunk;
+        float guard = 1.f, cut = 0.f;
+        for (ch = 0; ch < nch; ch++) {
+            float c = reduction(bank->lane[ch].gun_env, -16.f, 2.f / 3.f);
+            if (c > cut) cut = c;
+            if (inputs[ch]) in[ch] = inputs[ch] + off;
+            if (outputs[ch]) out[ch] = outputs[ch] + off;
+        }
+        /* While a shot is loud the lift steps aside, as the step tick does, so a shot is never made sharper. */
+        guard = 1.f - cut / 4.f;
+        if (guard < 0.f) guard = 0.f;
+        for (i = 0; i < n; i++) {
+            float sum = 0.f, target, g = bank->step.gain;
+            int used = 0;
+            for (ch = 0; ch < nch; ch++)
+                if (in[ch]) { sum += in[ch][i]; used++; }
+            step_feed(&bank->step, used ? sum / (float)used : 0.f);
+            target = step_target(&bank->step, bank->power, guard);
+            g += (target - g) * (target > g ? bank->step.atk : bank->step.rel);
+            bank->step.gain = g;
+            gains[i] = g;
+        }
+        replace_core(effect, in, out, n);
+        for (ch = 0; ch < nch; ch++) {
+            if (!out[ch]) continue;
+            for (i = 0; i < n; i++) {
+                float y, mag;
+                if (gains[i] < 1.001f) continue;
+                y = out[ch][i] * gains[i];
+                mag = fabsf(y);
+                /* Lower ceiling than the normal one, so a boosted step still has room for the Level preamp. */
+                if (mag > 0.708f) y = copysignf(0.708f + tanhf((mag - 0.708f) / 0.05f) * 0.05f, y);
+                out[ch][i] = y;
+            }
+        }
+    }
+}
+
+static void replace_core(Effect* effect, float** inputs, float** outputs, i32 frames) {
     Bank* bank = effect ? effect->object : 0;
     if (bank && bank->mode) {
         if (!inputs || !outputs || frames < 1) return;
@@ -339,6 +464,16 @@ static void set_param(Effect* effect, i32 index, float value) {
         if (value > 1.f) value = 1.f;
         bank->hit = value;
     }
+    if (index == 2) {
+        int on = value >= 0.5f ? 1 : 0;
+        if (on && !bank->boost) step_arm(&bank->step, bank->rate);
+        bank->boost = on;
+    }
+    if (index == 3) {
+        if (value < 0.f) value = 0.f;
+        if (value > 1.f) value = 1.f;
+        bank->power = value;
+    }
 }
 
 static float get_param(Effect* effect, i32 index) {
@@ -346,6 +481,8 @@ static float get_param(Effect* effect, i32 index) {
     if (!bank) return 0.f;
     if (index == 0) return bank->mode ? 1.f : 0.f;
     if (index == 1) return bank->hit;
+    if (index == 2) return bank->boost ? 1.f : 0.f;
+    if (index == 3) return bank->power;
     return 0.f;
 }
 
@@ -367,10 +504,11 @@ static iptr dispatch(Effect* effect, i32 op, i32 index, iptr value, void* ptr, f
             if (bank->mode) arm_nova(&bank->lane[ch], opt);
             else arm(&bank->lane[ch], opt);
         }
+        step_arm(&bank->step, opt);
         return 1;
     }
     if (op == OP_PARAM_NAME && ptr) {
-        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : "";
+        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : index == 2 ? "Boost" : index == 3 ? "Power" : "";
         strncpy((char*)ptr, name, 8);
         return 1;
     }
@@ -402,7 +540,10 @@ EXPORT Effect* VSTPluginMain(void* host) {
     for (ch = 0; ch < 8; ch++) arm(&bank->lane[ch], 48000.f);
     bank->rate = 48000.f;
     bank->hit = 1.f;
+    bank->power = 0.75f;
+    bank->boost = 0;
     bank->mode = 0;
+    step_arm(&bank->step, 48000.f);
     effect->magic = 0x56737450;
     effect->dispatch = dispatch;
     effect->older = (void (*)(Effect*, float**, float**, i32))replace;
@@ -411,7 +552,7 @@ EXPORT Effect* VSTPluginMain(void* host) {
     effect->inputs = 8;
     effect->outputs = 8;
     effect->flags = 1 << 4;
-    effect->params = 2;
+    effect->params = 4;
     effect->delay = 0;
     effect->object = bank;
     effect->identity = 0x4A6B5475;
@@ -532,7 +673,10 @@ static int check_nova(void) {
     memset(name1, 0, sizeof name1);
     dispatch(e, OP_PARAM_NAME, 0, 0, name0, 0.f);
     dispatch(e, OP_PARAM_NAME, 1, 0, name1, 0.f);
-    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 2) bad = 1;
+    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 4) bad = 1;
+    dispatch(e, OP_PARAM_NAME, 2, 0, name0, 0.f);
+    dispatch(e, OP_PARAM_NAME, 3, 0, name1, 0.f);
+    if (strcmp(name0, "Boost") != 0 || strcmp(name1, "Power") != 0 || get_param(e, 2) != 0.f) bad = 1;
     if (get_param(e, 0) != 0.f || get_param(e, 1) != 1.f) bad = 1;
     e->set_param(e, 0, 1.f);
     e->set_param(e, 1, 1.f);
@@ -617,6 +761,67 @@ static int pipe_mode(void) {
     return 0;
 }
 
+/* The detector must agree with ai/features.py. ai/parity.bin holds two seconds of audio and Python's answer for it. */
+static int check_step(void) {
+    FILE* f = fopen("ai/parity.bin", "rb");
+    i32 frames = 0, hops = 0, i, k = 0, worst_at = 0;
+    float* audio = 0;
+    float* want = 0;
+    float worst = 0.f;
+    Step* st = (Step*)calloc(1, sizeof(Step));
+    float *in[8] = { 0 }, *out[8] = { 0 };
+    double on_energy = 0, off_energy = 0, peak = 0;
+    int rc = 1;
+    if (!f) { printf("step: ai/parity.bin not found. Run the check from the repository folder.\n"); free(st); return 1; }
+    if (fread(&frames, 4, 1, f) != 1 || frames < 48000 || frames > 480000) { fclose(f); free(st); return 1; }
+    audio = (float*)malloc((size_t)frames * 4);
+    if (!audio || fread(audio, 4, (size_t)frames, f) != (size_t)frames || fread(&hops, 4, 1, f) != 1 || hops < 10 || hops > 5000) goto done;
+    want = (float*)malloc((size_t)hops * 4);
+    if (!want || fread(want, 4, (size_t)hops, f) != (size_t)hops) goto done;
+    step_arm(st, 48000.f);
+    for (i = 0; i < frames; i++) {
+        step_feed(st, audio[i]);
+        if (st->count == 0 && k < hops) {
+            float d = fabsf(st->prob - want[k]);
+            if (d > worst) { worst = d; worst_at = k; }
+            k++;
+        }
+    }
+    printf("step: %d frames compared, worst difference from Python %.5f (frame %d)\n", k, worst, worst_at);
+    if (k != hops || worst > 0.02f) goto done;
+    /* Boost off must not change a sample. Boost at zero power must not either. Boost on must lift steps and stay under the ceiling. */
+    {
+        float* a = (float*)malloc((size_t)frames * 4);
+        float* b = (float*)malloc((size_t)frames * 4);
+        float* c = (float*)malloc((size_t)frames * 4);
+        int run;
+        for (run = 0; run < 3; run++) {
+            float* dst = run == 0 ? a : run == 1 ? b : c;
+            Effect* effect = VSTPluginMain(0);
+            memcpy(dst, audio, (size_t)frames * 4);
+            in[0] = out[0] = dst;
+            if (run > 0) {
+                effect->set_param(effect, 2, 1.f);
+                effect->set_param(effect, 3, run == 1 ? 0.f : 1.f);
+            }
+            replace(effect, in, out, frames);
+            dispatch(effect, OP_CLOSE, 0, 0, 0, 0.f);
+        }
+        for (i = 0; i < frames; i++) if (a[i] != b[i]) { printf("step: boost at zero power changed sample %d\n", i); goto inner_done; }
+        for (i = 0; i < frames; i++) {
+            if (fabsf(c[i]) > peak) peak = fabsf(c[i]);
+            if (want[(i / 480) < hops ? i / 480 : hops - 1] > 0.9f) { on_energy += (double)c[i] * c[i]; off_energy += (double)a[i] * a[i]; }
+        }
+        printf("step: boosted peak %.3f, energy where a step is sure %.1fx the unboosted\n", peak, off_energy > 0 ? on_energy / off_energy : 0.0);
+        if (peak <= 0.80 && off_energy > 0 && on_energy / off_energy > 4.0) rc = 0;
+inner_done:
+        free(a); free(b); free(c);
+    }
+done:
+    free(audio); free(want); free(st); fclose(f);
+    return rc;
+}
+
 int main(int argc, char** argv) {
     enum { sr = 48000, n = 48000 };
     static float left[n], right[n];
@@ -649,6 +854,7 @@ int main(int argc, char** argv) {
     if (!(quiet > 0.0008 && peak < 0.98f)) return 1;
     if (check_ears()) return 1;
     if (check_classic_tick()) return 1;
+    if (check_step()) return 1;
     return check_nova();
 }
 #endif
