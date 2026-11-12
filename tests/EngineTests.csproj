@@ -13,5 +13,7 @@
     <Compile Include="..\app\LoudnessMath.cs" Link="LoudnessMath.cs" />
     <Compile Include="..\app\CodProfile.cs" Link="CodProfile.cs" />
       <Compile Include="..\app\Installer.cs" Link="Installer.cs" />
+    <Compile Include="..\app\AudioKit.cs" Link="AudioKit.cs" />
+    <Compile Include="..\app\PcReport.cs" Link="PcReport.cs" />
   </ItemGroup>
 </Project>

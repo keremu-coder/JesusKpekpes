@@ -3,6 +3,13 @@ namespace JesusKpekpes;
 sealed class PcForm : Form
 {
     readonly TextBox _out = new();
+    readonly Label _status = new();
+    readonly ProgressBar _bar = new();
+    readonly System.Windows.Forms.Timer _clock = new() { Interval = 1000 };
+    readonly List<Button> _buttons = [];
+    DateTime _started;
+    string _what = "";
+    string _latest = "";
     bool _busy;
 
     public PcForm()
@@ -22,7 +29,14 @@ sealed class PcForm : Form
             Bounds = new Rectangle(16, 12, 680, 24),
             ForeColor = Color.FromArgb(180, 184, 198),
         };
-        _out.SetBounds(16, 200, 688, 424);
+        _status.SetBounds(16, 196, 688, 22);
+        _status.ForeColor = Color.FromArgb(139, 124, 255);
+        _bar.SetBounds(16, 220, 688, 6);
+        _bar.Style = ProgressBarStyle.Marquee;
+        _bar.MarqueeAnimationSpeed = 25;
+        _bar.Visible = false;
+        _clock.Tick += (_, _) => ShowStatus();
+        _out.SetBounds(16, 232, 688, 392);
         _out.Multiline = true;
         _out.ReadOnly = true;
         _out.ScrollBars = ScrollBars.Vertical;
@@ -33,21 +47,30 @@ sealed class PcForm : Form
         _out.Text = PlainPreview();
 
         var y = 44;
-        Add("What will change", 16, y, () => _ = Go("-Action Optimize -Module Both -WhatIf", t => PlainPreview() + "\r\n\r\n" + t));
-        Add("Optimize PC and controller", 210, y, () => _ = Go("-Action Optimize -Module Both"), 210);
+        Add("What will change", 16, y, () => _ = Go("-Action Optimize -Module Both -WhatIf", "Checking what would change", (t, _) => PlainPreview() + "\r\n\r\n" + PcReport.Normalize(t)));
+        Add("Optimize PC and controller", 210, y, () => _ = Go("-Action Optimize -Module Both", "Optimizing your PC and controller", (t, code) => PcReport.Optimized(t, code), 900000, true), 210);
         Add("Undo that", 440, y, () =>
         {
             if (MessageBox.Show(this, "Put the PC and controller changes back? Audio stays as it is.", "Undo", MessageBoxButtons.YesNo) == DialogResult.Yes)
-                _ = Go("-Action Undo -Module Both -Silent");
+                _ = Go("-Action Undo -Module Both -Silent", "Putting your settings back", (t, _) => string.IsNullOrWhiteSpace(t) ? "Done. Your PC and controller settings are back as they were. Audio was not touched." : PcReport.Normalize(t));
         });
         y = 96;
-        Add("Check this PC", 16, y, () => _ = Go("-Action Verify -Module Both", t => t + "\r\n\r\n" + CodFind.Report()));
+        Add("Check this PC", 16, y, () => _ = Go("-Action Verify -Module Both", "Checking your PC (read only)", (t, _) => PcReport.Verify(t, CodFind.Report())));
         Add("NVIDIA panel", 176, y, OpenNvidia);
         Add("Display settings", 336, y, () => Open("ms-settings:display"));
         Add("Network check", 516, y, () => _ = LoadCheck());
-        Add("Name the hitch", 16, 148, () => _ = Go("-Action Hitch", null, "Play for 20 seconds. This only watches. Nothing is changed."), 220, Color.FromArgb(139, 124, 255));
+        Add("Name the hitch", 16, 148, () => _ = Go("-Action Hitch", "Watching for stutter. Play your game for 20 seconds. Nothing is changed", (t, _) => PcReport.Normalize(t)), 220, Color.FromArgb(139, 124, 255));
         Controls.Add(note);
+        Controls.Add(_status);
+        Controls.Add(_bar);
         Controls.Add(_out);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _clock.Stop();
+        _clock.Dispose();
+        base.OnFormClosed(e);
     }
 
     void Add(string text, int x, int y, Action click, int width = 150, Color? back = null)
@@ -63,6 +86,7 @@ sealed class PcForm : Form
         button.FlatAppearance.BorderSize = 0;
         button.Click += (_, _) => click();
         Controls.Add(button);
+        _buttons.Add(button);
     }
 
     static string PlainPreview() =>
@@ -92,32 +116,59 @@ sealed class PcForm : Form
         Frame numbers are not estimated here. Monitor and frames records a minute of the game and counts average, 1% low and 0.1% low from that capture.
         """;
 
-    void Show(string text) => _out.Text = string.IsNullOrWhiteSpace(text) ? "No report came back." : text;
+    void Show(string text) => _out.Text = string.IsNullOrWhiteSpace(text) ? "No report came back." : PcReport.Normalize(text);
 
-    async Task Go(string args, Func<string, string>? wrap = null, string? starting = null)
+    void ShowStatus()
     {
-        if (_busy)
-        {
-            Show("Still working.");
-            return;
-        }
-        _busy = true;
-        Show(starting ?? "Working. This can take a minute. The window stays usable.");
+        if (!_busy) return;
+        var seconds = (int)(DateTime.Now - _started).TotalSeconds;
+        _status.Text = _what + "... " + seconds / 60 + ":" + (seconds % 60).ToString("00") + (_latest.Length > 0 ? "   " + _latest : "");
+    }
+
+    void Busy(bool on, string what = "")
+    {
+        _busy = on;
+        _what = what;
+        _latest = "";
+        _started = DateTime.Now;
+        _bar.Visible = on;
+        foreach (var button in _buttons) button.Enabled = !on;
+        if (on) { _clock.Start(); ShowStatus(); }
+        else { _clock.Stop(); _status.Text = ""; }
+    }
+
+    async Task Go(string args, string what, Func<string, int, string> wrap, int timeoutMs = 180000, bool live = false)
+    {
+        if (_busy) return;
+        Busy(true, what);
+        _out.Text = "Working. You can leave this window open. The line above shows it is still running.";
         try
         {
-            var text = await Task.Run(() => Run(args));
-            Show(wrap is null ? text : wrap(text));
+            var started = true;
+            void Line(string line)
+            {
+                if (string.IsNullOrWhiteSpace(line) || IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(() =>
+                {
+                    _latest = line.Trim();
+                    if (!live) return;
+                    if (started) { _out.Clear(); started = false; }
+                    _out.AppendText(line.TrimEnd() + "\r\n");
+                });
+            }
+            var (text, code) = await Task.Run(() => Run(args, timeoutMs, Line));
+            Show(wrap(text, code));
         }
         finally
         {
-            _busy = false;
+            Busy(false);
         }
     }
 
-    static string Run(string args)
+    static (string Text, int Code) Run(string args, int timeoutMs, Action<string> line)
     {
         var script = Script();
-        if (!File.Exists(script)) return "The PC script was not found next to the program. Reinstall or unzip the whole folder.";
+        if (!File.Exists(script)) return ("The PC script was not found next to the program. Reinstall or unzip the whole folder.", 1);
         try
         {
             var start = new System.Diagnostics.ProcessStartInfo
@@ -131,23 +182,40 @@ sealed class PcForm : Form
                 WorkingDirectory = Path.GetDirectoryName(script)!,
             };
             using var process = System.Diagnostics.Process.Start(start);
-            if (process is null) return "Windows did not start PowerShell.";
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(180000)) return "That is taking too long. Close it from Task Manager if it is stuck.";
-            return (output.Result + "\r\n" + error.Result).Trim();
+            if (process is null) return ("Windows did not start PowerShell.", 1);
+            var all = new System.Text.StringBuilder();
+            void Take(string? data)
+            {
+                if (data is null) return;
+                lock (all) all.AppendLine(data);
+                line(data);
+            }
+            process.OutputDataReceived += (_, e) => Take(e.Data);
+            process.ErrorDataReceived += (_, e) => Take(e.Data);
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            if (!process.WaitForExit(timeoutMs))
+            {
+                try { process.Kill(true); } catch (InvalidOperationException) { }
+                lock (all) return ("It did not finish in " + timeoutMs / 60000 + " minutes, so it was stopped. Nothing is left running. What it printed before that:\r\n" + all, 1);
+            }
+            process.WaitForExit();
+            lock (all) return (all.ToString().Trim(), process.ExitCode);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
-            return ex.Message;
+            return (ex.Message, 1);
         }
     }
 
     async Task LoadCheck()
     {
-        Show("Checking the line...");
+        if (_busy) return;
+        Busy(true, "Checking your internet line");
+        _out.Text = "This takes about 30 seconds. Please wait.";
         try { Show(await NetCheck.Run()); }
         catch (Exception ex) { Show(ex.Message); }
+        finally { Busy(false); }
     }
 
     static void Open(string target) =>
@@ -165,7 +233,7 @@ sealed class PcForm : Form
             Open(path);
             return;
         }
-        Show("NVIDIA Control Panel was not found. Run Optimize to set Prefer maximum performance. If NVIDIA's interface is missing, add cod.exe and set Power management mode to Prefer maximum performance by hand.");
+        Show("NVIDIA Control Panel is not on this PC. If your graphics card is not NVIDIA (for example AMD Radeon), ignore this: nothing is wrong and nothing needs doing.\r\n\r\nIf you do have an NVIDIA card, press Optimize. If NVIDIA's panel is still missing, add cod.exe and set Power management mode to Prefer maximum performance by hand.");
     }
 
     static string Script()
