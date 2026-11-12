@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "freq_guard.h" // <--- ADDED THIS
 
 #if defined(_WIN32)
 #define EXPORT __declspec(dllexport)
@@ -84,6 +85,7 @@ typedef struct {
     float rate;
     float hit;
     int mode;
+    fg_state_t gun_guard; // <--- ADDED THIS
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
@@ -276,6 +278,10 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
             outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain);
         }
     }
+    
+    // <--- ADDED THIS BLOCK --->
+    // Apply the Gunshot Suppressor AFTER your existing tune processing
+    fg_process_block(&bank->gun_guard, outputs, frames);
 }
 
 static void set_param(Effect* effect, i32 index, float value) {
@@ -361,6 +367,11 @@ EXPORT Effect* VSTPluginMain(void* host) {
     bank->rate = 48000.f;
     bank->hit = 1.f;
     bank->mode = 0;
+    
+    // <--- ADDED THIS LINE --->
+    // Initialize the Gunshot Suppressor (48000Hz, 8 channels)
+    fg_init(&bank->gun_guard, 48000.0f, 8);
+
     effect->magic = 0x56737450;
     effect->dispatch = dispatch;
     effect->older = (void (*)(Effect*, float**, float**, i32))replace;
