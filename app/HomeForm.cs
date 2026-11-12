@@ -8,7 +8,7 @@ sealed class HomeForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 560);
+        ClientSize = new Size(460, 680);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 11f);
@@ -30,7 +30,9 @@ sealed class HomeForm : Form
         var programs = Button("Get the audio programs", 278, () => { Open(ref _programs, () => new ProgramsForm()); });
         var cod = Button("Call of Duty settings", 342, () => Open(ref _cod, () => new CodForm()));
         var check = Button("Sound check (compare two tunes)", 406, () => Open(ref _check, () => new SoundCheckForm()));
-        Controls.AddRange([title, body, audio, pc, programs, cod, check]);
+        var bench = Button("Monitor and frames", 470, () => Open(ref _bench, () => new BenchForm()));
+        var startup = Button("Startup menu", 534, () => Open(ref _startup, () => new StartupForm()));
+        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup]);
         // The audio tune cannot work without Equalizer APO. Offer it once per start, only when it is missing.
         Shown += (_, _) =>
         {
@@ -43,7 +45,7 @@ sealed class HomeForm : Form
         };
     }
 
-    Form? _audio, _pc, _programs, _cod, _check;
+    Form? _audio, _pc, _programs, _cod, _check, _bench, _startup;
 
     // One window of each kind. Pressing the button again brings the open one forward instead of stacking another.
     T Open<T>(ref T? slot, Func<T> make) where T : Form
@@ -63,7 +65,7 @@ sealed class HomeForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        foreach (var form in new[] { _audio, _pc, _programs, _cod, _check })
+        foreach (var form in new[] { _audio, _pc, _programs, _cod, _check, _bench, _startup })
             if (form is { IsDisposed: false }) form.Dispose();
         base.OnFormClosed(e);
     }

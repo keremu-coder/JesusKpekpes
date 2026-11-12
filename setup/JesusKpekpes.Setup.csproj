@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>JesusKpekpes.Setup</RootNamespace>
+    <AssemblyName>JesusKpekpes-Setup</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="payload.zip" Condition="Exists('payload.zip')">
+      <LogicalName>payload.zip</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

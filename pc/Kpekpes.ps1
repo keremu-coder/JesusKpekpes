@@ -18,7 +18,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare', 'Hitch')][string]$Action = 'Menu',
+    [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare', 'Hitch', 'Display', 'Startup', 'StartupOff', 'Measure')][string]$Action = 'Menu',
     [ValidateSet('PC', 'Controller', 'Both')][string]$Module = 'Both',
     [switch]$Silent,
     [switch]$Reapply,
@@ -26,7 +26,11 @@ param(
     [switch]$Detailed,
     [string]$Before,
     [string]$After,
-    [string]$Group = ''   # Undo only this tweak group, e.g. -Group 'Scheduling' (for per-group A/B tests)
+    [string]$Group = '',   # Undo only this tweak group, e.g. -Group 'Scheduling' (for per-group A/B tests)
+    [string]$Names = '',
+    [ValidateSet('', 'Before', 'After')][string]$Side = '',
+    [int]$Seconds = 60,
+    [string]$ProcessName = 'cod.exe'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -39,6 +43,9 @@ $root = $PSScriptRoot
 . (Join-Path $root 'lib\Stats.ps1')
 . (Join-Path $root 'lib\Safety.ps1')
 . (Join-Path $root 'lib\Topology.ps1')
+. (Join-Path $root 'lib\Display.ps1')
+. (Join-Path $root 'lib\Startup.ps1')
+. (Join-Path $root 'lib\Frames.ps1')
 . (Join-Path $root 'modules\Pc.ps1')
 . (Join-Path $root 'modules\Controller.ps1')
 
@@ -171,6 +178,8 @@ function Show-Menu {
         Write-Host '   8) Compare two frame captures' -ForegroundColor White
         Write-Host '   9) What will change' -ForegroundColor White
         Write-Host '  10) Name the hitch (watch only, about 20 seconds)' -ForegroundColor White
+        Write-Host '  11) Raise the monitor to the highest listed rate' -ForegroundColor White
+        Write-Host '  12) List the startup menu' -ForegroundColor White
         Write-Host '   0) Exit' -ForegroundColor White
         Write-Host ''
         $c = Read-Host '  choice'
@@ -190,6 +199,8 @@ function Show-Menu {
             $script:WhatIfMode = $false
         }
         elseif ($c -eq '10') { Invoke-KHitchWatch }
+        elseif ($c -eq '11') { if (-not (Initialize-KRoot)) { Write-Host 'Cannot create the data folder. The monitor was not changed.' -ForegroundColor Red } else { Open-KJournal 'pc'; foreach ($line in @(Invoke-KDisplayRaise)) { Write-Host $line } } }
+        elseif ($c -eq '12') { foreach ($item in @(Get-KStartupItems)) { Write-Host ('  ' + $(if ($item.On) { 'on ' } else { 'off' }) + '  ' + $item.Name + '  (' + $item.Where + ')') } }
         else { continue }
         Write-Host ''
         [void](Read-Host '  Press Enter to return to the menu')
@@ -220,3 +231,24 @@ elseif ($Action -eq 'Optimize') { Invoke-OptimizeAction $Module }
 elseif ($Action -eq 'Verify') { Invoke-VerifyAction $Module }
 elseif ($Action -eq 'Undo') { Invoke-UndoAction $Module }
 elseif ($Action -eq 'Hitch') { Invoke-KHitchWatch }
+elseif ($Action -eq 'Display') {
+    if (-not (Initialize-KRoot)) { throw 'Cannot create the data folder. The monitor was not changed.' }
+    Open-KJournal 'pc'
+    foreach ($line in @(Invoke-KDisplayRaise)) { Write-Output $line }
+}
+elseif ($Action -eq 'Startup') {
+    foreach ($item in @(Get-KStartupItems)) {
+        $state = if ($item.On) { 'on' } else { 'off' }
+        $cmd = ([string]$item.Command) -replace '[\r\n\t]', ' '
+        Write-Output ('ITEM' + "`t" + $item.Name + "`t" + $state + "`t" + $item.Where + "`t" + $cmd)
+    }
+}
+elseif ($Action -eq 'StartupOff') {
+    if (-not (Initialize-KRoot)) { throw 'Cannot create the data folder. Nothing was turned off.' }
+    Open-KJournal 'pc'
+    $picked = @($Names -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    foreach ($line in @(Disable-KStartup $picked)) { Write-Output $line }
+}
+elseif ($Action -eq 'Measure') {
+    foreach ($line in @(Invoke-KMeasure -Side $Side -Seconds $Seconds -ProcessName $ProcessName)) { Write-Output $line }
+}
