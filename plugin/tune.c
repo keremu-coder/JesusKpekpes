@@ -1,8 +1,10 @@
 /* Build on Windows, from this folder:
    x86_64-w64-mingw32-gcc -shared -O2 -o JesusKpekpesTune.dll tune.c -lm
-   The text file is the equalizer. Classic mode is the default. It raises only the foot band.
-   The foot band is raised by the same amount in every ear, so the loudness difference between the ears is kept.
+   The text file is the equalizer. Classic mode is the default. It raises the foot band, and the step tick
+   (shoe grit at 3.4 kHz) only while it is a hit, so a steady sound in that band is not turned up.
+   Both are raised by the same amount in every ear, so the loudness difference between the ears is kept.
    The lift only ever adds level: it eases back to nothing as the foot band gets loud and is never below the input.
+   While a gun is loud in any ear the tick lift steps aside, so a shot's crack is not made sharper.
    A gun is turned down in its own band, on the ear that fired. The other ear is never touched.
    Nova mode is off until the host sets the Nova parameter. In that mode a step is lifted only while it is a hit. */
 #include <math.h>
@@ -114,6 +116,11 @@ static void arm(Lane* lane, float rate) {
     memset(lane, 0, sizeof *lane);
     set_band(&lane->gun, 1400.f, 0.6f, rate);
     set_band(&lane->foot, 180.f, 1.0f, rate);
+    set_band(&lane->tick, 3400.f, 1.4f, rate);
+    lane->fast_a = 1.f - expf(-1.f / (rate * 0.0025f));
+    lane->fast_r = 1.f - expf(-1.f / (rate * 0.040f));
+    lane->slow_a = 1.f - expf(-1.f / (rate * 0.080f));
+    lane->slow_r = 1.f - expf(-1.f / (rate * 0.400f));
     lane->foot_attack = 1.f - expf(-1.f / (rate * 0.008f));
     lane->foot_release = 1.f - expf(-1.f / (rate * 0.100f));
     lane->gun_attack = 1.f - expf(-1.f / (rate * 0.003f));
@@ -132,21 +139,27 @@ static float reduction(float env, float threshold, float slope) {
 }
 
 typedef struct {
-    float gun_band, foot_band, other;
+    float gun_band, foot_band, tick_band, other;
 } Split;
+
+static void follow(float* env, float level, float attack, float release);
 
 static void split(Lane* lane, float x, Split* out) {
     float gun_band = tick(&lane->gun, x);
     float foot_band = tick(&lane->foot, x);
+    float tick_band = tick(&lane->tick, x);
     float foot_level = fabsf(foot_band);
     float gun_level = fabsf(gun_band);
     lane->foot_env += (foot_level - lane->foot_env) * (foot_level > lane->foot_env ? lane->foot_attack : lane->foot_release);
     lane->gun_env += (gun_level - lane->gun_env) * (gun_level > lane->gun_env ? lane->gun_attack : lane->gun_release);
     if (lane->foot_env < 1e-20f) lane->foot_env = 0.f;
     if (lane->gun_env < 1e-20f) lane->gun_env = 0.f;
+    follow(&lane->tick_fast, fabsf(tick_band), lane->fast_a, lane->fast_r);
+    follow(&lane->tick_slow, fabsf(tick_band), lane->slow_a, lane->slow_r);
     out->gun_band = gun_band;
     out->foot_band = foot_band;
-    out->other = x - gun_band - foot_band;
+    out->tick_band = tick_band;
+    out->other = x - gun_band - foot_band - tick_band;
 }
 
 /* Linear gain for the foot band, never below 1. Up to +10 dB for a quiet foot, easing to 1 as the band gets loud. */
@@ -155,9 +168,9 @@ static float lift(float env) {
     return db > 0.f ? powf(10.f, db / 20.f) : 1.f;
 }
 
-static float finish(Lane* lane, const Split* part, float foot_gain) {
+static float finish(Lane* lane, const Split* part, float foot_gain, float tick_gain) {
     float gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
-    float y = part->other + part->foot_band * foot_gain + part->gun_band * gun_gain;
+    float y = part->other + part->foot_band * foot_gain + part->tick_band * tick_gain + part->gun_band * gun_gain;
     float mag = fabsf(y);
     if (mag <= 0.8912509f) return y;
     return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
@@ -184,9 +197,9 @@ static void arm_nova(Lane* lane, float rate) {
 
 /* One gain for every ear. A steady band (ratio near 1) stays at 1.
    A hit is lifted even when it is not tiny, up to max_db. The floor keeps a normal foot from being ignored. */
-static float transient_gain(float fast, float ratio, float max_db) {
+static float transient_db(float fast, float ratio, float max_db) {
     float novelty, edge, level, quiet, db;
-    if (max_db <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 1.f;
+    if (max_db <= 0.05f || fast < 1e-6f || ratio < 1.15f) return 0.f;
     novelty = 20.f * log10f(ratio);
     if (novelty > 18.f) novelty = 18.f;
     edge = novelty / 12.f;
@@ -196,6 +209,23 @@ static float transient_gain(float fast, float ratio, float max_db) {
     if (quiet < 0.65f) quiet = 0.65f;
     if (quiet > 1.f) quiet = 1.f;
     db = max_db * quiet * edge;
+    if (db <= 0.f) return 0.f;
+    return db;
+}
+
+static float transient_gain(float fast, float ratio, float max_db) {
+    float db = transient_db(fast, ratio, max_db);
+    if (db <= 0.f) return 1.f;
+    return powf(10.f, db / 20.f);
+}
+
+/* Classic step tick. Up to +9 dB while it is a hit. Fades out as the loudest gun trim reaches 4 dB. */
+static float classic_tick_gain(float fast, float ratio, float gun_cut_db) {
+    float guard = 1.f - gun_cut_db / 4.f;
+    float db;
+    if (guard <= 0.f) return 1.f;
+    if (guard > 1.f) guard = 1.f;
+    db = transient_db(fast, ratio, 9.f) * guard;
     if (db <= 0.f) return 1.f;
     return powf(10.f, db / 20.f);
 }
@@ -264,17 +294,23 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
     i32 i, ch;
     if (!bank || frames < 1 || !inputs || !outputs) return;
     for (i = 0; i < frames; i++) {
-        float strongest = 0.f;
-        float foot_gain;
+        float strongest = 0.f, best_t_fast = 0.f, best_t_ratio = 1.f, gun_cut = 0.f;
+        float foot_gain, tick_gain;
         for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
+            Lane* lane = &bank->lane[ch];
+            float cut;
             if (!inputs[ch] || !outputs[ch]) continue;
-            split(&bank->lane[ch], inputs[ch][i], &part[ch]);
-            if (bank->lane[ch].foot_env > strongest) strongest = bank->lane[ch].foot_env;
+            split(lane, inputs[ch][i], &part[ch]);
+            if (lane->foot_env > strongest) strongest = lane->foot_env;
+            consider(lane->tick_fast, lane->tick_slow, &best_t_fast, &best_t_ratio);
+            cut = reduction(lane->gun_env, -16.f, 2.f / 3.f);
+            if (cut > gun_cut) gun_cut = cut;
         }
         foot_gain = lift(strongest);
+        tick_gain = classic_tick_gain(best_t_fast, best_t_ratio, gun_cut);
         for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
             if (!inputs[ch] || !outputs[ch]) continue;
-            outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain);
+            outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain, tick_gain);
         }
     }
 }
@@ -432,6 +468,48 @@ static double energy(const float* x, int from, int count) {
     return sum;
 }
 
+/* Classic step tick. A steady 3.4 kHz tone must not be lifted, a short quiet hit must be,
+   and the same hit under a loud gun must not get the tick lift. */
+static int check_classic_tick(void) {
+    enum { sr = 48000, n = 48000 };
+    static float a[n], b[n], dry[n], gl[n], gr[n], gdry[n];
+    float* in[8] = { a, b };
+    float* out[8] = { a, b };
+    int i, bad = 0, at = n / 3, len = (int)(sr * 0.032f);
+    double steady, hit, guarded;
+    Effect* e = VSTPluginMain(0);
+    for (i = 0; i < n; i++) a[i] = sinf(2.f * 3.14159265f * 3400.f * i / sr) * 0.03f;
+    memcpy(dry, a, sizeof dry);
+    memset(b, 0, sizeof b);
+    replace(e, in, out, n);
+    steady = energy(a, n - n / 5, n / 5) / energy(dry, n - n / 5, n / 5);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+
+    memset(a, 0, sizeof a);
+    memset(b, 0, sizeof b);
+    for (i = 0; i < len; i++)
+        a[at + i] = sinf(2.f * 3.14159265f * 3400.f * (at + i) / sr) * 0.01f * sinf((float)i / (float)len * 3.14159265f);
+    memcpy(dry, a, sizeof dry);
+    memcpy(gl, a, sizeof gl);
+    e = VSTPluginMain(0);
+    replace(e, in, out, n);
+    hit = energy(a, at, len) / energy(dry, at, len);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+
+    for (i = 0; i < n; i++) gr[i] = sinf(2.f * 3.14159265f * 1400.f * i / sr) * 0.9f;
+    memcpy(gdry, gl, sizeof gdry);
+    e = VSTPluginMain(0);
+    in[0] = gl; in[1] = gr; out[0] = gl; out[1] = gr;
+    replace(e, in, out, n);
+    guarded = energy(gl, at, len) / energy(gdry, at, len);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    printf("classic tick steady %.3f hit %.3f under gun %.3f\n", steady, hit, guarded);
+    if (!(steady > 0.9 && steady < 1.1)) bad = 1;
+    if (!(hit > 2.0)) bad = 1;
+    if (!(guarded < hit * 0.6)) bad = 1;
+    return bad;
+}
+
 /* Nova is a separate mode. A steady 3.2 kHz tone must not be lifted. A short hit must be. */
 static int check_nova(void) {
     enum { sr = 48000, n = 48000 };
@@ -565,6 +643,7 @@ int main(int argc, char** argv) {
     dispatch(effect, OP_CLOSE, 0, 0, 0, 0);
     if (!(quiet > 0.0008 && peak < 0.98f)) return 1;
     if (check_ears()) return 1;
+    if (check_classic_tick()) return 1;
     return check_nova();
 }
 #endif

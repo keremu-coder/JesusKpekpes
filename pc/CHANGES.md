@@ -1,3 +1,12 @@
+# Unreleased
+
+- **Game Bar is removed** with the other Xbox apps (`Microsoft.XboxGamingOverlay`). On dual-CCD X3D chips it is still kept.
+- **The "Get an app to open this ms-gamebar link" window is silenced** for both `ms-gamebar` and `ms-gamingoverlay`,
+  in the same run that removes Game Bar and again every time the app starts. Verify reports both links.
+- If Game Bar is installed again, the hidden handler is taken off so Game Bar works.
+- Audio: Drop and Well trim 500 Hz and raise 3.4 kHz with the hit slider. The plug-in lifts the 3.4 kHz step tick
+  up to 9 dB only while it is a hit, linked across ears, and not while a gun is being trimmed.
+
 # Changes in 1.3.0
 
 The logic behind these changes is checked by `tests/Test-Logic.ps1` (120 checks) and the new `tests/Test-Stats.ps1` (53 checks).

@@ -296,6 +296,53 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     Check(hush.All(v => v == 0f), "silence must stay silence");
 }
 
+// ---- Classic step tick: a quiet hit at 3.4 kHz is lifted, a steady tone is not, a loud gun switches it off ----
+{
+    const int rate = 48000;
+    float E(float[] x, int from, int count) { double t = 0; for (var i = from; i < from + count; i++) t += (double)x[i] * x[i]; return (float)t; }
+    var steadyTick = new float[rate];
+    for (var i = 0; i < rate; i++) steadyTick[i] = MathF.Sin(2 * MathF.PI * 3400 * i / rate) * 0.03f;
+    var steadyDry = (float[])steadyTick.Clone();
+    TuneEngine.CompressLinked([steadyTick, new float[rate]], rate);
+    var steadyTickGain = E(steadyTick, rate - rate / 5, rate / 5) / E(steadyDry, rate - rate / 5, rate / 5);
+    Check(steadyTickGain > 0.9f && steadyTickGain < 1.1f, $"a steady 3.4 kHz tone must not be lifted, gain {steadyTickGain}");
+
+    var at = rate / 3;
+    var len = (int)(rate * 0.032f);
+    var hitL = new float[rate];
+    for (var i = 0; i < len; i++) hitL[at + i] = MathF.Sin(2 * MathF.PI * 3400 * (at + i) / rate) * 0.01f * MathF.Sin(i / (float)len * MathF.PI);
+    var hitDry = (float[])hitL.Clone();
+    var underGun = (float[])hitL.Clone();
+    TuneEngine.CompressLinked([hitL, new float[rate]], rate);
+    var tickHitGain = E(hitL, at, len) / E(hitDry, at, len);
+    Check(tickHitGain > 2f, $"a quiet step tick should come up, gain {tickHitGain}");
+
+    var gunEar = new float[rate];
+    for (var i = 0; i < rate; i++) gunEar[i] = MathF.Sin(2 * MathF.PI * 1400 * i / rate) * 0.9f;
+    TuneEngine.CompressLinked([underGun, gunEar], rate);
+    var guardedGain = E(underGun, at, len) / E(hitDry, at, len);
+    Check(guardedGain < tickHitGain * 0.6f, $"while a gun is loud the tick must not be lifted, {guardedGain} vs {tickHitGain}");
+
+    var leftTick = new float[rate];
+    var rightTick = new float[rate];
+    for (var i = 0; i < len; i++)
+    {
+        var w = MathF.Sin(2 * MathF.PI * 3400 * (at + i) / rate) * 0.01f * MathF.Sin(i / (float)len * MathF.PI);
+        leftTick[at + i] = w;
+        rightTick[at + i] = w * MathF.Pow(10f, -12f / 20f);
+    }
+    var gapDryTick = 10 * MathF.Log10(E(leftTick, at, len) / E(rightTick, at, len));
+    TuneEngine.CompressLinked([leftTick, rightTick], rate);
+    var gapWetTick = 10 * MathF.Log10(E(leftTick, at, len) / E(rightTick, at, len));
+    Check(MathF.Abs(gapWetTick - gapDryTick) < 0.5f, $"the tick lift must keep the {gapDryTick:0.00} dB gap between the ears, got {gapWetTick:0.00}");
+
+    var dropText = Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "x"));
+    Check(dropText.Contains("Fc 3400 Hz Gain 3.0 dB"), "Drop raises the shoe grit at 3.4 kHz");
+    Check(dropText.Contains("Fc 500 Hz Gain -2.0 dB"), "Drop trims the boxy 500 Hz");
+    Check(Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 0, 80, "x")).Contains("Fc 3400 Hz Gain 0.0 dB"), "the 3.4 kHz lift follows the hit slider");
+    Check(Mix.Config(new MixPlan(Preset.Well, Route.Stereo, 100, 100, "x")).Contains("Fc 3400 Hz Gain 2.0 dB"), "Well raises the shoe grit a little less");
+}
+
 // ---- Nova Pro: extra profile. Drop and Well stay. A hit is lifted. A steady tone is not. ----
 {
     const int rate = 48000;
@@ -577,6 +624,8 @@ Check(NetCheck.Verdict(-1, -1, false).Contains("No answer"), "no ping at all mus
         Same("classic silence", 0, 1f, new float[256], new float[256]);
         Same("classic one ear", 0, 1f, Tone(2048, 180f, 0.03f));
         Same("classic noise", 0, 1f, Noise(4096, 0.08f, 3), Noise(4096, 0.08f, 9));
+        Same("classic step tick", 0, 1f, Step(16384, 3400f, 0.01f), Step(16384, 3400f, 0.004f));
+        Same("classic tick under gun", 0, 1f, Step(16384, 3400f, 0.01f), Tone(16384, 1400f, 0.9f));
         Same("nova step", 1, 1f, Step(16384, 3200f, 0.03f), Step(16384, 220f, 0.01f));
         Same("nova steady", 1, 1f, Tone(24000, 3200f, 0.03f), Tone(24000, 220f, 0.02f));
         Same("nova hit down", 1, 0f, Step(8192, 3200f, 0.03f), new float[8192]);
