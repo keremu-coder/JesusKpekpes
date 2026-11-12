@@ -476,6 +476,15 @@ Check(Installer.ApoFileFromRelease("{\"platform_releases\":{}}") is null, "missi
 Check(Installer.ApoFileFromRelease("not json") is null, "bad json must give null");
 Check(Installer.CanInstall("ReaPlugs") && !Installer.CanInstall("HeSuVi"), "only APO and ReaPlugs download");
 
+// ---- Boost step: off writes exactly what was written before, on adds two plugin settings ----
+{
+    var plain = Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "x"), "C:\\p\\t.dll");
+    var boosted = Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "x", Level.Safe, true, 75), "C:\\p\\t.dll");
+    Check(!plain.Contains("Boost"), "Boost step off must not change the config");
+    Check(boosted.Contains("VSTPlugin: Library \"C:\\p\\t.dll\" Boost 1 Power 0.75"), "Boost step on adds Boost and Power");
+    Check(boosted.Replace(" Boost 1 Power 0.75", "") == plain, "Boost step changes nothing else in the config");
+}
+
 // ---- PC report: plain words, real line breaks ----
 {
     var raw = "== PC optimizer - state ==\n  [FAIL] Fast startup off  - found 1\n  [FAIL] TcpNoDelay (global)  - not set\n  [WARN] Monitor refresh  - running 60 Hz\n  [PASS] Secure Boot  - on\n  SCORE: 15%  (17 of 113 checks passed, 2 warnings, 6 not applicable)";

@@ -8,7 +8,7 @@ enum Route { Stereo, Surround }
 
 enum Level { Safe, Balanced, Loud }
 
-sealed record MixPlan(Preset Preset, Route Route, int Hit, int Quiet, string Device, Level Level = Level.Safe);
+sealed record MixPlan(Preset Preset, Route Route, int Hit, int Quiet, string Device, Level Level = Level.Safe, bool Boost = false, int Power = 75);
 
 static class Mix
 {
@@ -60,6 +60,9 @@ static class Mix
                 var hit01 = Math.Clamp(plan.Hit, 0, 100) / 100f;
                 text.Append(" Nova 1 Hit ").Append(hit01.ToString("0.00", n));
             }
+            // Boost step is off unless asked for. Off writes nothing, so the line is exactly what it was before.
+            if (plan.Boost)
+                text.Append(" Boost 1 Power ").Append((Math.Clamp(plan.Power, 0, 100) / 100f).ToString("0.00", n));
             text.Append("\r\n");
         }
         if (plan.Route == Route.Surround)
