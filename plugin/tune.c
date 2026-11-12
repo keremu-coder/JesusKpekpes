@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include "freq_guard.h" // <--- ADDED THIS
+#include "../freq_guard.h" // <--- ADDED THIS
 
 #if defined(_WIN32)
 #define EXPORT __declspec(dllexport)
