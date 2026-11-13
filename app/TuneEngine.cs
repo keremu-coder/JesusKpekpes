@@ -234,6 +234,99 @@ public static class TuneEngine
         return 0;
     }
 
+    /// <summary>
+    /// Cinema loudness. The same math as plugin/tune.c. Amount under 0.001 does not touch a sample.
+    /// Quiet stretches rise. A hot stretch falls. Hiss stays. A shot louder than the bed is not lifted.
+    /// There is no delay.
+    /// </summary>
+    public static void ApplyLoud(float[][] ears, int sampleRate, float amount)
+    {
+        if (amount < 0.001f || ears.Length == 0) return;
+        if (amount > 1f) amount = 1f;
+        var count = ears.Length > 8 ? 8 : ears.Length;
+        var length = ears.Min(e => e.Length);
+        var rate = (float)Rate(sampleRate);
+        var hp = MathF.Exp(-2f * 3.14159274f * 70f / rate);
+        var detUp = 1f - MathF.Exp(-1f / (rate * 0.180f));
+        var detDown = 1f - MathF.Exp(-1f / (rate * 0.400f));
+        var gUp = 1f - MathF.Exp(-1f / (rate * 0.550f));
+        var gDown = 1f - MathF.Exp(-1f / (rate * 0.040f));
+        var limR = 1f - MathF.Exp(-1f / (rate * 0.080f));
+        var holdLen = (int)(rate * 0.045f);
+        if (holdLen < 1) holdLen = 1;
+        var target = -24f + 6f * amount;
+        var z = new float[count];
+        var det = 0f;
+        var gainDb = 0f;
+        var lim = 1f;
+        var hold = 0;
+        const float ceiling = 0.8912509f;
+        for (var i = 0; i < length; i++)
+        {
+            var p = 0f;
+            var used = 0;
+            for (var ch = 0; ch < count; ch++)
+            {
+                var x = ears[ch][i];
+                var zz = hp * z[ch] + (1f - hp) * x;
+                if (MathF.Abs(zz) < 1e-20f) zz = 0f;
+                z[ch] = zz;
+                var h = x - zz;
+                p += h * h;
+                used++;
+            }
+            if (used > 1) p /= used;
+            var slow = det;
+            if (slow > 1e-12f && p > slow * 6f && p > 0.01f)
+            {
+                hold = holdLen;
+                if (gainDb > 0f) gainDb = 0f;
+            }
+            {
+                var tracked = p;
+                if (slow > 1e-12f && tracked > slow * 8f) tracked = slow * 8f;
+                var coef = tracked > slow ? detUp : detDown;
+                slow += (tracked - slow) * coef;
+                if (slow < 1e-20f) slow = 0f;
+                det = slow;
+            }
+            var level = 10f * MathF.Log10(slow + 1e-20f);
+            var want = (target - level) * 0.72f;
+            if (want < -10f) want = -10f;
+            if (want > 12f) want = 12f;
+            var gate = (level + 66f) / 10f;
+            if (gate < 0f) gate = 0f;
+            else if (gate > 1f) gate = 1f;
+            gate = gate * gate * (3f - 2f * gate);
+            want *= gate;
+            if (hold > 0)
+            {
+                want = gainDb < 0f ? gainDb : 0f;
+                hold--;
+            }
+            gainDb += (want - gainDb) * (want > gainDb ? gUp : gDown);
+            var g = MathF.Pow(10f, gainDb / 20f);
+            var pk = 0f;
+            for (var ch = 0; ch < count; ch++)
+            {
+                var y = ears[ch][i] * g;
+                ears[ch][i] = y;
+                var ay = MathF.Abs(y);
+                if (ay > pk) pk = ay;
+            }
+            var need = pk > ceiling ? ceiling / pk : 1f;
+            if (need < lim) lim = need;
+            else lim += (1f - lim) * limR;
+            for (var ch = 0; ch < count; ch++)
+            {
+                var y = ears[ch][i] * lim;
+                var mag = MathF.Abs(y);
+                if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
+                ears[ch][i] = y;
+            }
+        }
+    }
+
     static void Follow(ref float env, float level, float attack, float release)
     {
         env += (level - env) * (level > env ? attack : release);

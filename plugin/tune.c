@@ -6,7 +6,8 @@
    The lift only ever adds level: it eases back to nothing as the foot band gets loud and is never below the input.
    While a gun is loud in any ear the tick lift steps aside, so a shot's crack is not made sharper.
    A gun is turned down in its own band, on the ear that fired. The other ear is never touched.
-   Nova mode is off until the host sets the Nova parameter. In that mode a step is lifted only while it is a hit. */
+   Nova mode is off until the host sets the Nova parameter. In that mode a step is lifted only while it is a hit.
+   Loud is a last stage, off until the host sets it. It raises a quiet stretch and does not delay the sound. */
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -94,14 +95,24 @@ typedef struct {
     int hop, count, pos;
 } Step;
 
+/* Cinema loudness. Off until the host sets Loud. The detector is high-passed so bass rumble
+   does not pull the gain down. The sound itself is not delayed and is not high-passed. */
+typedef struct {
+    float z[8];
+    float hp, det, det_up, det_down, gain_db, g_up, g_down, lim, lim_r, target, amount;
+    int hold, hold_len;
+} Loud;
+
 typedef struct {
     Lane lane[8];
     Step step;
+    Loud loud;
     float rate;
     float hit;
     float power;
     int mode;
     int boost;
+    int loud_on;
     float own;
     int own_hold;
 } Bank;
@@ -439,6 +450,102 @@ static float step_target(const Step* st, float power, float guard) {
     return powf(10.f, 16.f * power * t * guard / 20.f);
 }
 
+static void loud_arm(Loud* ld, float rate, float amount) {
+    if (rate < 1000.f) rate = 48000.f;
+    if (amount < 0.f) amount = 0.f;
+    if (amount > 1.f) amount = 1.f;
+    memset(ld, 0, sizeof *ld);
+    ld->hp = expf(-2.f * 3.14159274f * 70.f / rate);
+    ld->det_up = 1.f - expf(-1.f / (rate * 0.180f));
+    ld->det_down = 1.f - expf(-1.f / (rate * 0.400f));
+    ld->g_up = 1.f - expf(-1.f / (rate * 0.550f));
+    ld->g_down = 1.f - expf(-1.f / (rate * 0.040f));
+    ld->lim_r = 1.f - expf(-1.f / (rate * 0.080f));
+    ld->lim = 1.f;
+    ld->hold_len = (int)(rate * 0.045f);
+    if (ld->hold_len < 1) ld->hold_len = 1;
+    ld->amount = amount;
+    /* Balanced is about -20 dB, Loud is -18. Safe never calls this. */
+    ld->target = -24.f + 6.f * amount;
+}
+
+/* One shared gain for every ear. A quiet stretch rises slowly. A hot stretch falls in about 40 ms.
+   A real shot (loud, and far above the bed) drops the lift on that sample so the shot is not raised.
+   A footstep is quieter than that test, so it keeps the lift. No lookahead. */
+static void loud_run(Loud* ld, float** out, i32 nch, i32 frames) {
+    const float ceiling = 0.8912509f;
+    i32 i, ch;
+    if (!ld || !out || frames < 1 || nch < 1) return;
+    if (nch > 8) nch = 8;
+    for (i = 0; i < frames; i++) {
+        float p = 0.f, slow, level, want, gate, g, pk, need;
+        int used = 0;
+        for (ch = 0; ch < nch; ch++) {
+            float x, z, h;
+            if (!out[ch]) continue;
+            x = out[ch][i];
+            z = ld->hp * ld->z[ch] + (1.f - ld->hp) * x;
+            if (fabsf(z) < 1e-20f) z = 0.f;
+            ld->z[ch] = z;
+            h = x - z;
+            p += h * h;
+            used++;
+        }
+        if (used > 1) p /= (float)used;
+        slow = ld->det;
+        /* A shot is a jump well above an established bed, not the start of a loud tone.
+           The bed keeps moving, capped, so a shot cannot drag it by more than about 9 dB. */
+        if (slow > 1e-12f && p > slow * 6.f && p > 0.01f) {
+            ld->hold = ld->hold_len;
+            if (ld->gain_db > 0.f) ld->gain_db = 0.f;
+        }
+        {
+            float tracked = p;
+            float coef;
+            if (slow > 1e-12f && tracked > slow * 8.f) tracked = slow * 8.f;
+            coef = tracked > slow ? ld->det_up : ld->det_down;
+            slow += (tracked - slow) * coef;
+            if (slow < 1e-20f) slow = 0.f;
+            ld->det = slow;
+        }
+        level = 10.f * log10f(slow + 1e-20f);
+        want = (ld->target - level) * 0.72f;
+        if (want < -10.f) want = -10.f;
+        if (want > 12.f) want = 12.f;
+        gate = (level + 66.f) / 10.f;
+        if (gate < 0.f) gate = 0.f;
+        else if (gate > 1.f) gate = 1.f;
+        gate = gate * gate * (3.f - 2.f * gate);
+        want *= gate;
+        if (ld->hold > 0) {
+            want = ld->gain_db < 0.f ? ld->gain_db : 0.f;
+            ld->hold--;
+        }
+        ld->gain_db += (want - ld->gain_db) * (want > ld->gain_db ? ld->g_up : ld->g_down);
+        g = powf(10.f, ld->gain_db / 20.f);
+        pk = 0.f;
+        for (ch = 0; ch < nch; ch++) {
+            float y, ay;
+            if (!out[ch]) continue;
+            y = out[ch][i] * g;
+            out[ch][i] = y;
+            ay = fabsf(y);
+            if (ay > pk) pk = ay;
+        }
+        need = pk > ceiling ? ceiling / pk : 1.f;
+        if (need < ld->lim) ld->lim = need;
+        else ld->lim += (1.f - ld->lim) * ld->lim_r;
+        for (ch = 0; ch < nch; ch++) {
+            float y, mag;
+            if (!out[ch]) continue;
+            y = out[ch][i] * ld->lim;
+            mag = fabsf(y);
+            if (mag > ceiling) y = copysignf(ceiling + tanhf((mag - ceiling) / 0.05f) * 0.05f, y);
+            out[ch][i] = y;
+        }
+    }
+}
+
 static void replace_core(Effect* effect, float** inputs, float** outputs, i32 frames);
 
 static void replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
@@ -446,11 +553,15 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
     enum { chunk = 512 };
     float gains[chunk];
     i32 off, i, ch, nch;
+    float clip = 0.708f;
     if (!bank || !bank->boost) {
         replace_core(effect, inputs, outputs, frames);
+        if (bank && bank->loud_on && outputs && frames > 0)
+            loud_run(&bank->loud, outputs, effect->inputs > 8 ? 8 : effect->inputs, frames);
         return;
     }
     if (frames < 1 || !inputs || !outputs) return;
+    if (bank->loud_on) clip = 0.8912509f;
     nch = effect->inputs > 8 ? 8 : effect->inputs;
     for (off = 0; off < frames; off += chunk) {
         float* in[8] = { 0 };
@@ -485,12 +596,13 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
                 if (gains[i] < 1.001f) continue;
                 y = out[ch][i] * gains[i];
                 mag = fabsf(y);
-                /* Lower ceiling than the normal one, so a boosted step still has room for the Level preamp. */
-                if (mag > 0.708f) y = copysignf(0.708f + tanhf((mag - 0.708f) / 0.05f) * 0.05f, y);
+                /* 0.708 leaves room for the old Level preamp. Cinema holds its own ceiling. */
+                if (mag > clip) y = copysignf(clip + tanhf((mag - clip) / 0.05f) * 0.05f, y);
                 out[ch][i] = y;
             }
         }
     }
+    if (bank->loud_on) loud_run(&bank->loud, outputs, nch, frames);
 }
 
 static void replace_core(Effect* effect, float** inputs, float** outputs, i32 frames) {
@@ -556,6 +668,18 @@ static void set_param(Effect* effect, i32 index, float value) {
         if (value > 1.f) value = 1.f;
         bank->power = value;
     }
+    if (index == 4) {
+        if (value < 0.f) value = 0.f;
+        if (value > 1.f) value = 1.f;
+        if (value < 0.001f) {
+            bank->loud_on = 0;
+            bank->loud.amount = 0.f;
+            return;
+        }
+        if (!bank->loud_on || bank->loud.amount != value)
+            loud_arm(&bank->loud, bank->rate, value);
+        bank->loud_on = 1;
+    }
 }
 
 static float get_param(Effect* effect, i32 index) {
@@ -565,6 +689,7 @@ static float get_param(Effect* effect, i32 index) {
     if (index == 1) return bank->hit;
     if (index == 2) return bank->boost ? 1.f : 0.f;
     if (index == 3) return bank->power;
+    if (index == 4) return bank->loud_on ? bank->loud.amount : 0.f;
     return 0.f;
 }
 
@@ -587,10 +712,11 @@ static iptr dispatch(Effect* effect, i32 op, i32 index, iptr value, void* ptr, f
             else arm(&bank->lane[ch], opt);
         }
         step_arm(&bank->step, opt);
+        if (bank->loud_on) loud_arm(&bank->loud, opt, bank->loud.amount);
         return 1;
     }
     if (op == OP_PARAM_NAME && ptr) {
-        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : index == 2 ? "Boost" : index == 3 ? "Power" : "";
+        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : index == 2 ? "Boost" : index == 3 ? "Power" : index == 4 ? "Loud" : "";
         strncpy((char*)ptr, name, 8);
         return 1;
     }
@@ -635,7 +761,7 @@ EXPORT Effect* VSTPluginMain(void* host) {
     effect->inputs = 8;
     effect->outputs = 8;
     effect->flags = 1 << 4;
-    effect->params = 4;
+    effect->params = 5;
     effect->delay = 0;
     effect->object = bank;
     effect->identity = 0x4A6B5475;
@@ -756,10 +882,12 @@ static int check_nova(void) {
     memset(name1, 0, sizeof name1);
     dispatch(e, OP_PARAM_NAME, 0, 0, name0, 0.f);
     dispatch(e, OP_PARAM_NAME, 1, 0, name1, 0.f);
-    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 4) bad = 1;
+    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 5) bad = 1;
     dispatch(e, OP_PARAM_NAME, 2, 0, name0, 0.f);
     dispatch(e, OP_PARAM_NAME, 3, 0, name1, 0.f);
     if (strcmp(name0, "Boost") != 0 || strcmp(name1, "Power") != 0 || get_param(e, 2) != 0.f) bad = 1;
+    dispatch(e, OP_PARAM_NAME, 4, 0, name0, 0.f);
+    if (strcmp(name0, "Loud") != 0 || get_param(e, 4) != 0.f) bad = 1;
     if (get_param(e, 0) != 0.f || get_param(e, 1) != 1.f) bad = 1;
     e->set_param(e, 0, 1.f);
     e->set_param(e, 1, 1.f);
@@ -840,11 +968,12 @@ static int read_full(void* dst, size_t bytes) {
 }
 
 /* Same samples in, same samples out, so the C# preview can be compared with this file.
-   Header: TNP1, channels, frames, mode (0 classic, 1 nova), rate, hit. Then planar float32. */
+   Header: TNP1, channels, frames, mode (0 classic, 1 nova), rate, hit, loud. Then planar float32.
+   loud under 0.001 leaves the samples exactly as they were without the cinema stage. */
 static int pipe_mode(void) {
     char magic[4];
     i32 channels = 0, frames = 0, mode = 0, rate = 0, ch;
-    float hit = 1.f;
+    float hit = 1.f, loud = 0.f;
     float* block = 0;
     float* inputs[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
     float* outputs[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -854,7 +983,7 @@ static int pipe_mode(void) {
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
     if (!read_full(magic, 4) || memcmp(magic, "TNP1", 4) != 0) return 2;
-    if (!read_full(&channels, 4) || !read_full(&frames, 4) || !read_full(&mode, 4) || !read_full(&rate, 4) || !read_full(&hit, 4)) return 2;
+    if (!read_full(&channels, 4) || !read_full(&frames, 4) || !read_full(&mode, 4) || !read_full(&rate, 4) || !read_full(&hit, 4) || !read_full(&loud, 4)) return 2;
     if (channels < 1 || channels > 8 || frames < 1 || frames > 96000 || (mode != 0 && mode != 1) || rate < 1000) return 2;
     block = (float*)malloc((size_t)channels * (size_t)frames * sizeof(float));
     if (!block || !read_full(block, (size_t)channels * (size_t)frames * sizeof(float))) { free(block); return 2; }
@@ -865,6 +994,7 @@ static int pipe_mode(void) {
         effect->set_param(effect, 0, 1.f);
         effect->set_param(effect, 1, hit);
     }
+    if (loud >= 0.001f) effect->set_param(effect, 4, loud);
     for (ch = 0; ch < channels; ch++) {
         inputs[ch] = block + (size_t)ch * (size_t)frames;
         outputs[ch] = inputs[ch];
@@ -943,6 +1073,127 @@ done:
     return rc;
 }
 
+/* Cinema. Off changes nothing. A quiet tone comes up. A hot tone and hiss do not. A shot stays under the ceiling. */
+static int check_loud(void) {
+    enum { sr = 48000, n = 96000, short_n = 48000 };
+    static float ql[n], qr[n], qdry[n], rdry[n];
+    static float hot[short_n], hiss[short_n], bed[n];
+    static float ident_a[4096], ident_b[4096];
+    float amp, gap_in, gap_out;
+    double quiet_up, hot_down, hiss_up, bed_up, shot_up;
+    float peak, a_l, a_r;
+    int i, bad = 0, shot_at, shot_len;
+    Effect* e;
+    float* in[8];
+    float* outp[8];
+
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+
+    for (i = 0; i < 4096; i++) ident_a[i] = sinf(2.f * 3.14159265f * 180.f * i / sr) * 0.02f;
+    memcpy(ident_b, ident_a, sizeof ident_a);
+    e = VSTPluginMain(0);
+    in[0] = outp[0] = ident_a;
+    replace(e, in, outp, 4096);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 4, 0.f);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = ident_b;
+    replace(e, in, outp, 4096);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    if (memcmp(ident_a, ident_b, sizeof ident_a) != 0) bad = 1;
+
+    a_l = powf(10.f, -45.f / 20.f) * 1.41421356f;
+    a_r = a_l * powf(10.f, -10.f / 20.f);
+    for (i = 0; i < n; i++) {
+        float s = sinf(2.f * 3.14159265f * 1000.f * i / sr);
+        qdry[i] = ql[i] = s * a_l;
+        rdry[i] = qr[i] = s * a_r;
+    }
+    e = VSTPluginMain(0);
+    e->set_param(e, 4, 0.67f);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = ql; in[1] = qr; outp[0] = ql; outp[1] = qr;
+    replace(e, in, outp, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    quiet_up = rms_db(ql, n / 2, n) - rms_db(qdry, n / 2, n);
+    gap_in = (float)(rms_db(qdry, n / 2, n) - rms_db(rdry, n / 2, n));
+    gap_out = (float)(rms_db(ql, n / 2, n) - rms_db(qr, n / 2, n));
+
+    amp = powf(10.f, -6.f / 20.f) * 1.41421356f;
+    for (i = 0; i < short_n; i++) hot[i] = sinf(2.f * 3.14159265f * 1000.f * i / sr) * amp;
+    memcpy(qdry, hot, sizeof hot);
+    e = VSTPluginMain(0);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = qdry;
+    replace(e, in, outp, short_n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 4, 1.f);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = hot;
+    replace(e, in, outp, short_n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    hot_down = rms_db(hot, short_n / 2, short_n) - rms_db(qdry, short_n / 2, short_n);
+
+    amp = powf(10.f, -70.f / 20.f) * 1.41421356f;
+    for (i = 0; i < short_n; i++) hiss[i] = sinf(2.f * 3.14159265f * 1000.f * i / sr) * amp;
+    memcpy(qdry, hiss, sizeof hiss);
+    e = VSTPluginMain(0);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = qdry;
+    replace(e, in, outp, short_n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 4, 1.f);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = hiss;
+    replace(e, in, outp, short_n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    hiss_up = rms_db(hiss, short_n / 2, short_n) - rms_db(qdry, short_n / 2, short_n);
+
+    amp = powf(10.f, -36.f / 20.f);
+    shot_at = (int)(sr * 1.4f);
+    shot_len = (int)(sr * 0.01f);
+    for (i = 0; i < n; i++) bed[i] = sinf(2.f * 3.14159265f * 180.f * i / sr) * amp;
+    for (i = 0; i < shot_len; i++) bed[shot_at + i] = sinf(2.f * 3.14159265f * 1400.f * (shot_at + i) / sr) * 0.7f;
+    memcpy(qdry, bed, sizeof bed);
+    e = VSTPluginMain(0);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = qdry;
+    replace(e, in, outp, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 4, 1.f);
+    memset(in, 0, sizeof in);
+    memset(outp, 0, sizeof outp);
+    in[0] = outp[0] = bed;
+    replace(e, in, outp, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    peak = 0.f;
+    for (i = 0; i < n; i++) if (fabsf(bed[i]) > peak) peak = fabsf(bed[i]);
+    bed_up = rms_db(bed, sr, (int)(sr * 1.2f)) - rms_db(qdry, sr, (int)(sr * 1.2f));
+    shot_up = rms_db(bed, shot_at, shot_at + shot_len) - rms_db(qdry, shot_at, shot_at + shot_len);
+    printf("loud: quiet %+.1f dB, hot %+.1f dB, hiss %+.2f dB, gap %.2f, bed %+.1f dB, shot %+.2f dB, peak %.3f\n",
+        quiet_up, hot_down, hiss_up, gap_out - gap_in, bed_up, shot_up, peak);
+    if (!(quiet_up > 8.0)) bad = 1;
+    if (!(hot_down < -4.0)) bad = 1;
+    if (!(fabs(hiss_up) < 1.0)) bad = 1;
+    if (!(fabsf(gap_out - gap_in) < 0.2f)) bad = 1;
+    if (!(bed_up > 3.0)) bad = 1;
+    if (!(shot_up < 1.0)) bad = 1;
+    if (!(peak <= 0.95f)) bad = 1;
+    return bad;
+}
+
 int main(int argc, char** argv) {
     enum { sr = 48000, n = 48000 };
     static float left[n], right[n];
@@ -976,6 +1227,7 @@ int main(int argc, char** argv) {
     if (check_ears()) return 1;
     if (check_classic_tick()) return 1;
     if (check_step()) return 1;
+    if (check_loud()) return 1;
     return check_nova();
 }
 #endif
