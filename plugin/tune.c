@@ -76,7 +76,7 @@ typedef struct {
 
 typedef struct {
     Stage gun, foot, tick;
-    float foot_env, gun_env;
+    float foot_env, gun_env, shot_env, shot_slow, shot_peak;
     float foot_attack, foot_release, gun_attack, gun_release;
     float weight_fast, weight_slow, tick_fast, tick_slow;
     float fast_a, fast_r, weight_r, slow_a, slow_r;
@@ -88,6 +88,8 @@ enum { STEP_BANDS = 12, STEP_LAG = 3 };
 typedef struct {
     Stage band[STEP_BANDS];
     float acc[STEP_BANDS], slow[STEP_BANDS], hist[STEP_LAG][STEP_BANDS];
+    float level[STEP_BANDS];
+    float hop_peak, last_peak;
     float slow_rate, atk, rel, gain, prob;
     int hop, count, pos;
 } Step;
@@ -100,6 +102,8 @@ typedef struct {
     float power;
     int mode;
     int boost;
+    float own;
+    int own_hold;
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
@@ -251,10 +255,36 @@ static void consider(float fast, float slow, float* best_fast, float* best_ratio
     if (ratio > *best_ratio) *best_ratio = ratio;
 }
 
+static int who_fired(float left, float right, float centre, int ears, float crack, int gunish, int* hold) {
+    float side, hi, bal;
+    /* A footstep is not a gun, and a steady tone is not a shot. Drop never reaches this. */
+    if (crack < 1.8f || !gunish) {
+        *hold = 0;
+        return 0;
+    }
+    if (ears < 2) right = left;
+    if (ears < 3) centre = 0.f;
+    side = left > right ? left : right;
+    hi = centre > side ? centre : side;
+    bal = (left < right ? left : right) / (side + 1e-8f);
+    /* Loud and in both ears: your gun, or a teammate close enough to be in both ears. */
+    if (hi > 0.08f && bal > 0.55f) *hold = 1;
+    /* Keep that decision until the crack ends, so the tail is not turned back up as an enemy. */
+    if (*hold && bal > 0.55f) return 1;
+    /* Quieter, or shoved into one ear: an enemy. */
+    if (hi > 0.004f && hi <= 0.08f) return 2;
+    if (hi > 0.02f && bal < 0.45f) return 2;
+    return 0;
+}
+
 static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
     Bank* bank = effect->object;
     float max_weight = 12.f * bank->hit;
     float max_tick = 16.f * bank->hit;
+    float peak_a = 1.f - expf(-1.f / (bank->rate * 0.0004f));
+    float peak_r = 1.f - expf(-1.f / (bank->rate * 0.040f));
+    float duck_down = 1.f - expf(-1.f / (bank->rate * 0.0015f));
+    float duck_up = 1.f - expf(-1.f / (bank->rate * 0.012f));
     i32 i, ch, nch = effect->inputs;
     if (nch > 8) nch = 8;
     for (i = 0; i < frames; i++) {
@@ -278,26 +308,59 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
             follow(&lane->tick_fast, fabsf(t), lane->fast_a, lane->fast_r);
             follow(&lane->tick_slow, fabsf(t), lane->slow_a, lane->slow_r);
             follow(&lane->gun_env, fabsf(g), lane->gun_attack, lane->gun_release);
+            follow(&lane->shot_env, fabsf(x), lane->gun_attack, lane->gun_release);
+            follow(&lane->shot_slow, fabsf(x), lane->slow_a, lane->slow_r);
+            follow(&lane->shot_peak, fabsf(x), peak_a, peak_r);
             consider(lane->weight_fast, lane->weight_slow, &best_w_fast, &best_w_ratio);
             consider(lane->tick_fast, lane->tick_slow, &best_t_fast, &best_t_ratio);
         }
         weight_gain = transient_gain(best_w_fast, best_w_ratio, max_weight);
         tick_gain = transient_gain(best_t_fast, best_t_ratio, max_tick);
-        for (ch = 0; ch < nch; ch++) {
-            Lane* lane;
-            float gun_gain, y, mag;
-            if (!inputs[ch] || !outputs[ch]) continue;
-            lane = &bank->lane[ch];
-            /* A shot is ducked only in front, and never while a step is the hit.
-               The step's own bands are not part of that duck, so the drum is not silenced. */
-            gun_gain = 1.f;
-            if ((nch <= 2 || ch < 3) && weight_gain < 1.15f && tick_gain < 1.15f)
-                gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
-            y = other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
-            mag = fabsf(y);
-            if (mag > 0.8912509f)
-                y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
-            outputs[ch][i] = y;
+        {
+            float step = weight_gain > tick_gain ? weight_gain : tick_gain;
+            float crack = 1.f, gmax = 0.f, fmax = 0.f, tmax = 0.f;
+            int who, ear, gunish;
+            float body, target, coeff;
+            for (ear = 0; ear < nch && ear < 8; ear++) {
+                Lane* lane = &bank->lane[ear];
+                if (ear < 3) {
+                    float c = lane->shot_env / (lane->shot_slow + 1e-5f);
+                    if (c > crack) crack = c;
+                }
+                if (lane->gun_env > gmax) gmax = lane->gun_env;
+                if (lane->weight_fast > fmax) fmax = lane->weight_fast;
+                if (lane->tick_fast > tmax) tmax = lane->tick_fast;
+            }
+            /* Gun band louder than the foot and the tick: this crack is a shot, not a step. */
+            gunish = gmax > fmax * 1.35f && gmax > tmax * 1.35f && gmax > 0.0015f;
+            if (gunish && crack >= 1.8f) {
+                weight_gain = 1.f;
+                tick_gain = 1.f;
+                step = 1.f;
+            }
+            who = who_fired(nch > 0 ? bank->lane[0].shot_peak : 0.f,
+                nch > 1 ? bank->lane[1].shot_peak : 0.f,
+                nch > 2 ? bank->lane[2].shot_peak : 0.f, nch, crack, gunish, &bank->own_hold);
+            target = who == 1 ? 0.10f : 1.f;
+            coeff = target < bank->own ? duck_down : duck_up;
+            bank->own += (target - bank->own) * coeff;
+            body = bank->own;
+            for (ch = 0; ch < nch; ch++) {
+                Lane* lane;
+                float gun_gain, y, mag;
+                if (!inputs[ch] || !outputs[ch]) continue;
+                lane = &bank->lane[ch];
+                gun_gain = 1.f;
+                if (who == 1) gun_gain = body;
+                else if (who == 2) gun_gain = 2.f;
+                else if ((nch <= 2 || ch < 3) && !(step >= 1.15f && !gunish))
+                    gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+                y = (other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain) * body + gun_b[ch] * gun_gain;
+                mag = fabsf(y);
+                if (mag > 0.8912509f)
+                    y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
+                outputs[ch][i] = y;
+            }
         }
     }
 }
@@ -321,6 +384,8 @@ static void step_arm(Step* st, float rate) {
 /* One mono sample in. Every 10 ms the probability that a footstep is playing is refreshed. */
 static void step_feed(Step* st, float x) {
     int i;
+    float ax = fabsf(x);
+    if (ax > st->hop_peak) st->hop_peak = ax;
     for (i = 0; i < STEP_BANDS; i++) {
         float y = tick(&st->band[i], x);
         st->acc[i] += y * y;
@@ -336,8 +401,11 @@ static void step_feed(Step* st, float x) {
             f[STEP_BANDS + i] = level - st->slow[i];
             f[2 * STEP_BANDS + i] = level - st->hist[st->pos][i];
             st->hist[st->pos][i] = level;
+            st->level[i] = level;
             st->acc[i] = 0.f;
         }
+        st->last_peak = st->hop_peak;
+        st->hop_peak = 0.f;
         st->pos = (st->pos + 1) % STEP_LAG;
         st->count = 0;
         z = step_b2;
@@ -351,9 +419,21 @@ static void step_feed(Step* st, float x) {
     }
 }
 
-/* The most a step is lifted: up to +16 dB at full power. Nothing happens below 50% sure, full lift from 90%. */
+/* A footstep is quiet. A gun sits around 1 to 2 kHz and must not be lifted. */
+static int step_blocked(const Step* st) {
+    float gun = st->level[6] + st->level[7] + st->level[8];
+    float foot = st->level[1] + st->level[2] + st->level[9];
+    if (st->last_peak > 0.18f && gun > foot + 3.f) return 1;
+    if (st->last_peak > 0.08f && gun > foot + 6.f) return 1;
+    return 0;
+}
+
+/* The most a step is lifted: up to +16 dB at full power.
+   Nothing happens below 62% sure, full lift from 90%. A gunshot is never lifted. */
 static float step_target(const Step* st, float power, float guard) {
-    float t = (st->prob - 0.5f) / 0.4f;
+    float t;
+    if (step_blocked(st)) return 1.f;
+    t = (st->prob - 0.62f) / 0.28f;
     if (t <= 0.f || power <= 0.f) return 1.f;
     if (t > 1.f) t = 1.f;
     return powf(10.f, 16.f * power * t * guard / 20.f);
@@ -453,6 +533,8 @@ static void set_param(Effect* effect, i32 index, float value) {
         int mode = value >= 0.5f ? 1 : 0;
         if (mode == bank->mode) return;
         bank->mode = mode;
+        bank->own = 1.f;
+        bank->own_hold = 0;
         for (ch = 0; ch < 8; ch++) {
             if (mode) arm_nova(&bank->lane[ch], bank->rate);
             else arm(&bank->lane[ch], bank->rate);
@@ -543,6 +625,7 @@ EXPORT Effect* VSTPluginMain(void* host) {
     bank->power = 0.75f;
     bank->boost = 0;
     bank->mode = 0;
+    bank->own = 1.f;
     step_arm(&bank->step, 48000.f);
     effect->magic = 0x56737450;
     effect->dispatch = dispatch;
@@ -703,10 +786,48 @@ static int check_nova(void) {
     hit = energy(burst, burst_at, burst_len + 400) / energy(burst_dry, burst_at, burst_len + 400);
     printf("nova burst gain %.3f\n", hit);
     if (!(hit > steady * 2.0)) bad = 1;
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    {
+        static float ol[n], orr[n], el[n], er[n];
+        int gun_at = n / 5, gun_len = (int)(sr * 0.04f), win = (int)(sr * 0.08f);
+        double own_dry = 0, enemy_dry = 0, own_out, enemy_out;
+        memset(ol, 0, sizeof ol);
+        memset(orr, 0, sizeof orr);
+        memset(el, 0, sizeof el);
+        memset(er, 0, sizeof er);
+        for (i = 0; i < gun_len; i++) {
+            float env = sinf((float)i / (float)gun_len * 3.14159265f);
+            float s = sinf(2.f * 3.14159265f * 1400.f * (gun_at + i) / sr) * env;
+            ol[gun_at + i] = orr[gun_at + i] = s * 0.55f;
+            el[gun_at + i] = s * 0.045f;
+            own_dry += (double)ol[gun_at + i] * ol[gun_at + i];
+            enemy_dry += (double)el[gun_at + i] * el[gun_at + i];
+        }
+        e = VSTPluginMain(0);
+        e->set_param(e, 0, 1.f);
+        e->set_param(e, 1, 1.f);
+        in[0] = ol; in[1] = orr; out[0] = ol; out[1] = orr;
+        replace(e, in, out, n);
+        own_out = energy(ol, gun_at, win);
+        dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+        e = VSTPluginMain(0);
+        e->set_param(e, 0, 1.f);
+        e->set_param(e, 1, 1.f);
+        in[0] = el; in[1] = er; out[0] = el; out[1] = er;
+        replace(e, in, out, n);
+        enemy_out = energy(el, gun_at, win);
+        dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+        printf("nova own shot %.3f enemy shot %.3f\n", own_out / own_dry, enemy_out / (enemy_dry + 1e-20));
+        if (!(own_out < own_dry * 0.08)) bad = 1;
+        if (!(enemy_out > enemy_dry * 0.9)) bad = 1;
+        if (!(enemy_out > own_out)) bad = 1;
+    }
     {
         static float z[64], zr[64];
         float* zin[8] = { z, zr };
         float* zout[8] = { z, zr };
+        e = VSTPluginMain(0);
+        e->set_param(e, 0, 1.f);
         replace(e, zin, zout, 64);
         for (i = 0; i < 64; i++) if (z[i] != 0.f || zr[i] != 0.f) bad = 1;
     }

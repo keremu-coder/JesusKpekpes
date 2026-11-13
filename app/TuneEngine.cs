@@ -118,6 +118,10 @@ public static class TuneEngine
         var slowR = 1f - MathF.Exp(-1f / (rate * 0.400f));
         var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
         var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.122f));
+        var peakA = 1f - MathF.Exp(-1f / (rate * 0.0004f));
+        var peakR = 1f - MathF.Exp(-1f / (rate * 0.040f));
+        var duckDown = 1f - MathF.Exp(-1f / (rate * 0.0015f));
+        var duckUp = 1f - MathF.Exp(-1f / (rate * 0.012f));
         var weight = new Bandpass[count];
         var tick = new Bandpass[count];
         var gun = new Bandpass[count];
@@ -132,11 +136,16 @@ public static class TuneEngine
         var tickFast = new float[count];
         var tickSlow = new float[count];
         var gunEnv = new float[count];
+        var shotEnv = new float[count];
+        var shotSlow = new float[count];
+        var shotPeak = new float[count];
         var weightBand = new float[count];
         var tickBand = new float[count];
         var gunBand = new float[count];
         var other = new float[count];
         const float ceiling = 0.8912509f;
+        var own = 1f;
+        var hold = 0;
         for (var i = 0; i < length; i++)
         {
             var bestWeightFast = 0f;
@@ -155,22 +164,74 @@ public static class TuneEngine
                 Follow(ref tickFast[k], MathF.Abs(tickBand[k]), fastA, fastR);
                 Follow(ref tickSlow[k], MathF.Abs(tickBand[k]), slowA, slowR);
                 Follow(ref gunEnv[k], MathF.Abs(gunBand[k]), gunAttack, gunRelease);
+                Follow(ref shotEnv[k], MathF.Abs(x), gunAttack, gunRelease);
+                Follow(ref shotSlow[k], MathF.Abs(x), slowA, slowR);
+                Follow(ref shotPeak[k], MathF.Abs(x), peakA, peakR);
                 Consider(weightFast[k], weightSlow[k], ref bestWeightFast, ref bestWeightRatio);
                 Consider(tickFast[k], tickSlow[k], ref bestTickFast, ref bestTickRatio);
             }
             var weightGain = TransientGain(bestWeightFast, bestWeightRatio, maxWeight);
             var tickGain = TransientGain(bestTickFast, bestTickRatio, maxTick);
+            var step = weightGain > tickGain ? weightGain : tickGain;
+            var crack = 1f;
+            var gmax = 0f;
+            var fmax = 0f;
+            var tmax = 0f;
+            for (var ear = 0; ear < count && ear < 8; ear++)
+            {
+                if (ear < 3)
+                {
+                    var c = shotEnv[ear] / (shotSlow[ear] + 1e-5f);
+                    if (c > crack) crack = c;
+                }
+                if (gunEnv[ear] > gmax) gmax = gunEnv[ear];
+                if (weightFast[ear] > fmax) fmax = weightFast[ear];
+                if (tickFast[ear] > tmax) tmax = tickFast[ear];
+            }
+            var gunish = gmax > fmax * 1.35f && gmax > tmax * 1.35f && gmax > 0.0015f;
+            if (gunish && crack >= 1.8f)
+            {
+                weightGain = 1f;
+                tickGain = 1f;
+                step = 1f;
+            }
+            var who = WhoFired(count > 0 ? shotPeak[0] : 0f, count > 1 ? shotPeak[1] : 0f, count > 2 ? shotPeak[2] : 0f, count, crack, gunish, ref hold);
+            var target = who == 1 ? 0.10f : 1f;
+            own += (target - own) * (target < own ? duckDown : duckUp);
+            var body = own;
             for (var k = 0; k < count; k++)
             {
                 var gunGain = 1f;
-                if ((count <= 2 || k < 3) && weightGain < 1.15f && tickGain < 1.15f)
+                if (who == 1) gunGain = body;
+                else if (who == 2) gunGain = 2f;
+                else if ((count <= 2 || k < 3) && !(step >= 1.15f && !gunish))
                     gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
-                var y = other[k] + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
+                var y = (other[k] + weightBand[k] * weightGain + tickBand[k] * tickGain) * body + gunBand[k] * gunGain;
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
                 ears[k][i] = y;
             }
         }
+    }
+
+    /// 1 = your gun or a close teammate (loud, both ears). 2 = an enemy shot. 0 = leave it.
+    static int WhoFired(float left, float right, float centre, int ears, float crack, bool gunish, ref int hold)
+    {
+        if (crack < 1.8f || !gunish)
+        {
+            hold = 0;
+            return 0;
+        }
+        if (ears < 2) right = left;
+        if (ears < 3) centre = 0f;
+        var side = left > right ? left : right;
+        var hi = centre > side ? centre : side;
+        var bal = (left < right ? left : right) / (side + 1e-8f);
+        if (hi > 0.08f && bal > 0.55f) hold = 1;
+        if (hold == 1 && bal > 0.55f) return 1;
+        if (hi > 0.004f && hi <= 0.08f) return 2;
+        if (hi > 0.02f && bal < 0.45f) return 2;
+        return 0;
     }
 
     static void Follow(ref float env, float level, float attack, float release)

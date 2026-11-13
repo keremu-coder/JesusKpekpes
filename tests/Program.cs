@@ -389,6 +389,55 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     var burstGain = Energy(burst, burstAt, burstLen + 400) / Energy(burstDry, burstAt, burstLen + 400);
     Check(burstGain > tickGain * 2f, $"a step hit {burstGain} should beat the steady tone {tickGain}");
 
+    float[] Gun(float amp)
+    {
+        var a = new float[rate];
+        var at = rate / 5;
+        var len = (int)(rate * 0.04f);
+        for (var i = 0; i < len; i++)
+        {
+            var env = MathF.Sin(i / (float)len * MathF.PI);
+            a[at + i] = MathF.Sin(2 * MathF.PI * 1400 * (at + i) / rate) * amp * env;
+        }
+        return a;
+    }
+    var ownL = Gun(0.55f);
+    var ownR = Gun(0.55f);
+    var enemyL = Gun(0.045f);
+    var enemyR = new float[rate];
+    var ownDryE = Energy(ownL, rate / 5, (int)(rate * 0.08f));
+    var enemyDryE = Energy(enemyL, rate / 5, (int)(rate * 0.08f));
+    TuneEngine.ShapeNova([ownL, ownR], rate, 100);
+    TuneEngine.ShapeNova([enemyL, enemyR], rate, 100);
+    var ownOut = Energy(ownL, rate / 5, (int)(rate * 0.08f));
+    var enemyOut = Energy(enemyL, rate / 5, (int)(rate * 0.08f));
+    Check(ownOut < ownDryE * 0.08f, $"your own shot should be pushed down, kept {ownOut / ownDryE}");
+    Check(enemyOut > enemyDryE * 0.9f, $"an enemy shot must not be pushed down, kept {enemyOut / enemyDryE}");
+    Check(enemyOut > ownOut, $"an enemy shot should come out above yours, enemy {enemyOut} own {ownOut}");
+
+    var footAt = rate / 5;
+    var footLen = (int)(rate * 0.04f);
+    var footL = new float[rate];
+    var footR = new float[rate];
+    for (var i = 0; i < footLen; i++)
+    {
+        var env = MathF.Sin(i / (float)footLen * MathF.PI);
+        var s = MathF.Sin(2 * MathF.PI * 220 * (footAt + i) / rate) * 0.12f * env;
+        footL[footAt + i] = s;
+        footR[footAt + i] = s;
+    }
+    var footDry = Energy(footL, footAt, (int)(rate * 0.08f));
+    TuneEngine.ShapeNova([footL, footR], rate, 100);
+    var footOut = Energy(footL, footAt, (int)(rate * 0.08f));
+    Check(footOut > footDry * 0.9f, $"a centred footstep must not be pushed down, kept {footOut / footDry}");
+
+    var sideL = Gun(0.40f);
+    var sideR = new float[rate];
+    var sideDry = Energy(sideL, rate / 5, (int)(rate * 0.08f));
+    TuneEngine.ShapeNova([sideL, sideR], rate, 100);
+    var sideOut = Energy(sideL, rate / 5, (int)(rate * 0.08f));
+    Check(sideOut > sideDry * 0.9f, $"a shot in one ear is an enemy and must stay up, kept {sideOut / sideDry}");
+
     var quietHit = new float[200];
     TuneEngine.ShapeNova([quietHit, new float[200]], rate, 100);
     Check(quietHit.All(v => v == 0f), "Nova silence must stay silence");
