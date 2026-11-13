@@ -108,8 +108,17 @@ Check(Mix.Switch(false) == "", "off must not include the filter file");
 var withPlugin = Mix.Config(well, @"C:\Games\JesusKpekpesTune.dll");
 Check(withPlugin.Contains("VSTPlugin: Library \"C:\\Games\\JesusKpekpesTune.dll\""), "our plugin must be named when the file is present");
 Check(withPlugin.Contains("Preamp: 0.0 dB"), "Safe must not add level on top of the plugin");
+Check(!withPlugin.Contains(" Loud "), "Safe must not turn the cinema stage on");
 var loudPlugin = Mix.Config(well with { Level = Level.Loud }, @"C:\Games\JesusKpekpesTune.dll");
-Check(loudPlugin.Contains("Preamp: 3.0 dB"), "Loud must reach the file Equalizer APO reads");
+Check(loudPlugin.Contains(" Loud 1.00"), "Loud must tell the plugin the cinema amount");
+Check(loudPlugin.Contains("Preamp: 0.0 dB\r\nDevice: all"), "stereo Loud lets the plugin hold the ceiling");
+var balancedPlugin = Mix.Config(well with { Level = Level.Balanced }, @"C:\Games\JesusKpekpesTune.dll");
+Check(balancedPlugin.Contains(" Loud 0.67"), "Balanced is the usual cinema level");
+Check(balancedPlugin.Contains("Preamp: 0.0 dB\r\nDevice: all"), "stereo Balanced lets the plugin hold the ceiling");
+Check(!Mix.Config(well with { Level = Level.Loud }).Contains(" Loud "), "without the plugin the cinema stage is not written");
+var surroundLoud = Mix.Config(surroundPlan with { Level = Level.Loud }, @"C:\Games\JesusKpekpesTune.dll");
+Check(surroundLoud.Contains(" Loud 1.00"), "surround Loud still names the plugin amount");
+Check(surroundLoud.Contains("Preamp: -3.0 dB\r\nDevice: all"), "surround keeps a little room after the fold");
 Check(!Mix.Config(well).Contains("VSTPlugin"), "the equalizer file stays plain when the plugin was not built");
 var restored = Mix.StripInclude("Preamp: 0 dB\r\nInclude: jesus-kpekpes\\switch.txt\r\nInclude: rara.txt\r\n");
 Check(restored.Contains("rara.txt") && !restored.Contains("jesus-kpekpes"), "turn off must remove only this tune");
@@ -442,6 +451,68 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     TuneEngine.ShapeNova([quietHit, new float[200]], rate, 100);
     Check(quietHit.All(v => v == 0f), "Nova silence must stay silence");
 
+    // Cinema sits after the tune. Safe is untouched. Quiet rises, a hot tone and hiss do not, a shot is not lifted.
+    {
+        float[] Sine(int n, float hz, float sineAmp)
+        {
+            var a = new float[n];
+            for (var i = 0; i < n; i++) a[i] = MathF.Sin(2f * MathF.PI * hz * i / rate) * sineAmp;
+            return a;
+        }
+        double RmsDb(float[] x, int from, int to)
+        {
+            double s = 0;
+            for (var i = from; i < to; i++) s += (double)x[i] * x[i];
+            return 10 * Math.Log10(s / (to - from) + 1e-20);
+        }
+        var cineN = rate * 2;
+        var quietAmp = MathF.Pow(10f, -45f / 20f) * MathF.Sqrt(2f);
+        var cineL = Sine(cineN, 1000f, quietAmp);
+        var cineR = Sine(cineN, 1000f, quietAmp * MathF.Pow(10f, -10f / 20f));
+        var cineDryL = (float[])cineL.Clone();
+        var cineDryR = (float[])cineR.Clone();
+        TuneEngine.ApplyLoud([cineL, cineR], rate, 0.67f);
+        var cineUp = RmsDb(cineL, cineN / 2, cineN) - RmsDb(cineDryL, cineN / 2, cineN);
+        var cineGapIn = RmsDb(cineDryL, cineN / 2, cineN) - RmsDb(cineDryR, cineN / 2, cineN);
+        var cineGapOut = RmsDb(cineL, cineN / 2, cineN) - RmsDb(cineR, cineN / 2, cineN);
+        Check(cineUp > 8.0, $"a quiet tone should come up, got {cineUp:0.0} dB");
+        Check(Math.Abs(cineGapOut - cineGapIn) < 0.2, $"cinema must keep the ear gap, drift {cineGapOut - cineGapIn:0.00}");
+        var hotAmp = MathF.Pow(10f, -6f / 20f) * MathF.Sqrt(2f);
+        var hot = Sine(rate, 1000f, hotAmp);
+        var hotDry = (float[])hot.Clone();
+        TuneEngine.ApplyLoud([hot], rate, 1f);
+        var hotDown = RmsDb(hot, rate / 2, rate) - RmsDb(hotDry, rate / 2, rate);
+        Check(hotDown < -4.0, $"a hot tone must not be lifted, change {hotDown:0.0} dB");
+        var hissAmp = MathF.Pow(10f, -70f / 20f) * MathF.Sqrt(2f);
+        var hiss = Sine(rate, 4000f, hissAmp);
+        var hissDry = (float[])hiss.Clone();
+        TuneEngine.ApplyLoud([hiss], rate, 1f);
+        var hissUp = RmsDb(hiss, rate / 2, rate) - RmsDb(hissDry, rate / 2, rate);
+        Check(Math.Abs(hissUp) < 1.0, $"hiss must stay put, change {hissUp:0.00} dB");
+        var untouched = Sine(1024, 180f, 0.02f);
+        var untouchedCopy = (float[])untouched.Clone();
+        TuneEngine.ApplyLoud([untouchedCopy], rate, 0f);
+        Check(untouched.Zip(untouchedCopy).All(p => p.First == p.Second), "cinema off must not change a sample");
+        var shotBed = Sine(rate * 2, 180f, MathF.Pow(10f, -36f / 20f));
+        var shotAt = (int)(rate * 1.5f);
+        var shotLen = (int)(rate * 0.01f);
+        for (var i = 0; i < shotLen; i++)
+            shotBed[shotAt + i] = MathF.Sin(2f * MathF.PI * 1400f * (shotAt + i) / rate) * 0.7f;
+        var shotDry = (float[])shotBed.Clone();
+        TuneEngine.ApplyLoud([shotBed], rate, 1f);
+        var shotPeak = 0f;
+        foreach (var sample in shotBed)
+        {
+            var a = MathF.Abs(sample);
+            if (a > shotPeak) shotPeak = a;
+        }
+        var bedUp = RmsDb(shotBed, rate, (int)(rate * 1.3f)) - RmsDb(shotDry, rate, (int)(rate * 1.3f));
+        var shotLift = RmsDb(shotBed, shotAt, shotAt + shotLen) - RmsDb(shotDry, shotAt, shotAt + shotLen);
+        Check(shotPeak <= 0.95f, $"a shot must stay under the ceiling, peak {shotPeak:0.00}");
+        Check(bedUp > 3.0, $"the quiet bed before the shot should still come up, {bedUp:0.0} dB");
+        Check(shotLift < 1.0, $"a shot must not be lifted, {shotLift:0.00} dB");
+    }
+
     var gapL = new float[rate];
     var gapR = new float[rate];
     var gapInL = new float[rate];
@@ -670,9 +741,10 @@ Check(NetCheck.Verdict(-1, -1, false).Contains("No answer"), "no ping at all mus
         }
         var worst = 0f;
         var worstName = "";
-        void Same(string name, int mode, float hit, params float[][] ears)
+        void Same(string name, int mode, float hit, params float[][] ears) => Gap(name, mode, hit, 0f, ears);
+        void Gap(string name, int mode, float hit, float loud, params float[][] ears)
         {
-            var diff = TuneGap(bin, mode, hit, rate, ears);
+            var diff = TuneGap(bin, mode, hit, rate, loud, ears);
             if (worstName.Length == 0 || diff > worst) { worst = diff; worstName = name; }
             Check(diff >= 0f && diff < 0.0001f, $"{name}: C and C# differ by {diff}");
         }
@@ -688,6 +760,13 @@ Check(NetCheck.Verdict(-1, -1, false).Contains("No answer"), "no ping at all mus
         Same("nova steady", 1, 1f, Tone(24000, 3200f, 0.03f), Tone(24000, 220f, 0.02f));
         Same("nova hit down", 1, 0f, Step(8192, 3200f, 0.03f), new float[8192]);
         Same("nova noise", 1, 0.6f, Noise(8192, 0.05f, 11), Noise(8192, 0.05f, 13));
+        Gap("cinema quiet", 0, 1f, 0.67f, Tone(16384, 1000f, 0.005f), Tone(16384, 1000f, 0.002f));
+        Gap("cinema hot", 0, 1f, 1f, Tone(8192, 1000f, 0.5f));
+        Gap("cinema hiss", 0, 1f, 1f, Tone(4096, 4000f, 0.0003f));
+        var shot = Tone(8192, 180f, 0.01f);
+        for (var i = 6000; i < 6200 && i < shot.Length; i++) shot[i] = MathF.Sin(2f * MathF.PI * 1400f * i / rate) * 0.6f;
+        Gap("cinema shot", 0, 1f, 1f, shot, (float[])shot.Clone());
+        Gap("nova cinema", 1, 1f, 0.67f, Step(8192, 3200f, 0.03f), Tone(8192, 220f, 0.01f));
         var dryFoot = Tone(8192, 180f, 0.02f);
         var wetFoot = (float[])dryFoot.Clone();
         TuneEngine.CompressLinked([wetFoot, (float[])quietRight.Clone()], rate);
@@ -752,7 +831,7 @@ static string? CompileTunePipe(string root)
     return bin;
 }
 
-static float TuneGap(string bin, int mode, float hit, int rate, float[][] ears)
+static float TuneGap(string bin, int mode, float hit, int rate, float loud, float[][] ears)
 {
     var frames = ears.Min(e => e.Length);
     var ms = new MemoryStream();
@@ -764,6 +843,7 @@ static float TuneGap(string bin, int mode, float hit, int rate, float[][] ears)
         w.Write(mode);
         w.Write(rate);
         w.Write(hit);
+        w.Write(loud);
         foreach (var ear in ears)
             for (var i = 0; i < frames; i++) w.Write(ear[i]);
     }
@@ -801,6 +881,7 @@ static float TuneGap(string bin, int mode, float hit, int rate, float[][] ears)
     }).ToArray();
     if (mode == 0) TuneEngine.CompressLinked(copy, rate);
     else TuneEngine.ShapeNova(copy, rate, (int)MathF.Round(hit * 100f));
+    if (loud >= 0.001f) TuneEngine.ApplyLoud(copy, rate, loud);
     var worst = 0f;
     for (var c = 0; c < ears.Length; c++)
     {

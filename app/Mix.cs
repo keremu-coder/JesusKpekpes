@@ -27,9 +27,17 @@ static class Mix
         var n = CultureInfo.InvariantCulture;
         var filters = Filters(plan);
         var nova = plan.Preset == Preset.Nova;
-        var preamp = string.IsNullOrWhiteSpace(plugin) || nova
-            ? PreampDb(filters, plan.Route, plan.Level, nova)
-            : plan.Level switch { Level.Balanced => 1.5f, Level.Loud => 3f, _ => 0f };
+        var pluginOn = !string.IsNullOrWhiteSpace(plugin);
+        var cinema = pluginOn ? Cinema(plan.Level) : 0f;
+        // Safe keeps today's preamp. Balanced and Loud hold the ceiling in the plugin, so a later preamp would only undo it.
+        // Surround still leaves a little room, because the 7.1 fold happens after the plugin.
+        float preamp;
+        if (!pluginOn || (nova && cinema <= 0f))
+            preamp = PreampDb(filters, plan.Route, plan.Level, nova);
+        else if (cinema <= 0f)
+            preamp = plan.Level switch { Level.Balanced => 1.5f, Level.Loud => 3f, _ => 0f };
+        else
+            preamp = plan.Route == Route.Surround ? -3f : 0f;
         var text = new System.Text.StringBuilder();
         text.Append("Device: ").Append(DeviceSelector(plan.Device)).Append("\r\n");
         if (plan.Route == Route.Surround && nova)
@@ -63,6 +71,8 @@ static class Mix
             // Boost step is off unless asked for. Off writes nothing, so the line is exactly what it was before.
             if (plan.Boost)
                 text.Append(" Boost 1 Power ").Append((Math.Clamp(plan.Power, 0, 100) / 100f).ToString("0.00", n));
+            if (cinema > 0f)
+                text.Append(" Loud ").Append(cinema.ToString("0.00", n));
             text.Append("\r\n");
         }
         if (plan.Route == Route.Surround)
@@ -140,6 +150,8 @@ static class Mix
             }
             if (nova) TuneEngine.ShapeNova([left, right], sr, plan.Hit);
             else TuneEngine.CompressLinked([left, right], sr);
+            var stereoCinema = Cinema(plan.Level);
+            if (stereoCinema > 0f) TuneEngine.ApplyLoud([left, right], sr, stereoCinema);
             return;
         }
 
@@ -180,6 +192,8 @@ static class Mix
         var ears = new[] { left, right, sideLeft, sideRight, center, rearLeft, rearRight }.OfType<float[]>().ToArray();
         if (nova) TuneEngine.ShapeNova(ears, sr, plan.Hit);
         else TuneEngine.CompressLinked(ears, sr);
+        var surroundCinema = Cinema(plan.Level);
+        if (surroundCinema > 0f) TuneEngine.ApplyLoud(ears, sr, surroundCinema);
         if (nova)
         {
             for (var i = 0; i < left.Length; i++)
@@ -229,6 +243,9 @@ static class Mix
     }
 
     public static float PreampDb(MixPlan plan) => PreampDb(Filters(plan), plan.Route, plan.Level, plan.Preset == Preset.Nova);
+
+    // 0 is Safe (the plugin line is unchanged). Balanced aims near -20 dB, Loud near -18.
+    static float Cinema(Level level) => level switch { Level.Balanced => 0.67f, Level.Loud => 1f, _ => 0f };
 
     // Front plus centre, so a 7.1 Nova fold still has room when both speak at once.
     const float NovaCenter = 0.707f;
