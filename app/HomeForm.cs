@@ -44,6 +44,7 @@ sealed class HomeForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open", null, (_, _) => Reveal());
         menu.Items.Add("Exit", null, (_, _) => { _quit = true; Close(); });
+        Look.Menu(menu);
         _tray.ContextMenuStrip = menu;
         _tray.MouseDoubleClick += (_, _) => Reveal();
         Shown += (_, _) =>

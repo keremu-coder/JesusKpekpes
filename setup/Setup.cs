@@ -25,25 +25,30 @@ sealed class SetupForm : Form
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(520, 280);
-        BackColor = Color.FromArgb(7, 9, 15);
-        ForeColor = Color.FromArgb(242, 243, 245);
+        BackColor = Color.FromArgb(14, 26, 43);
+        ForeColor = Color.FromArgb(243, 237, 226);
         Font = new Font("Segoe UI", 10f);
         var body = new Label
         {
             Text = "Installs into Program Files, adds a Start menu shortcut, and adds an entry in Windows Settings so you can uninstall it. Uninstall puts the PC changes back. Audio is left as it is.",
             Bounds = new Rectangle(20, 16, 480, 72),
-            ForeColor = Color.FromArgb(180, 184, 198),
+            ForeColor = Color.FromArgb(196, 184, 165),
         };
         _status.SetBounds(20, 100, 480, 80);
+        _status.ForeColor = Color.FromArgb(243, 237, 226);
         var install = new Button
         {
             Text = "Install",
             Bounds = new Rectangle(20, 200, 160, 44),
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(88, 101, 242),
-            ForeColor = Color.White,
+            UseVisualStyleBackColor = false,
+            BackColor = Color.FromArgb(28, 48, 72),
+            ForeColor = Color.FromArgb(243, 237, 226),
         };
-        install.FlatAppearance.BorderSize = 0;
+        install.FlatAppearance.BorderSize = 1;
+        install.FlatAppearance.BorderColor = Color.FromArgb(224, 122, 95);
+        install.FlatAppearance.MouseOverBackColor = Color.FromArgb(36, 60, 88);
+        install.FlatAppearance.MouseDownBackColor = Color.FromArgb(18, 34, 52);
         install.Click += (_, _) => Install(install);
         var had = Existing();
         if (had is { } found)
@@ -59,10 +64,14 @@ sealed class SetupForm : Form
                 Text = "Open Jesus Kpekpes",
                 Bounds = new Rectangle(200, 200, 220, 44),
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(40, 120, 80),
-                ForeColor = Color.White,
+                UseVisualStyleBackColor = false,
+                BackColor = Color.FromArgb(22, 37, 54),
+                ForeColor = Color.FromArgb(243, 237, 226),
             };
-            open.FlatAppearance.BorderSize = 0;
+            open.FlatAppearance.BorderSize = 1;
+            open.FlatAppearance.BorderColor = Color.FromArgb(42, 62, 86);
+            open.FlatAppearance.MouseOverBackColor = Color.FromArgb(36, 60, 88);
+            open.FlatAppearance.MouseDownBackColor = Color.FromArgb(18, 34, 52);
             open.Click += (_, _) =>
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(found.Exe) { UseShellExecute = true });
