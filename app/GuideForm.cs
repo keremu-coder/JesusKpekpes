@@ -139,9 +139,10 @@ sealed class GuideForm : Form
         _seven.Visible = mix;
         _keep.Visible = mix;
         _level.Visible = mix;
-        _boost.Visible = mix;
-        _powerLabel.Visible = mix;
-        _power.Visible = mix;
+        _boost.Visible = mix && _preset.SelectedIndex != 0;
+        _powerLabel.Visible = mix && _preset.SelectedIndex != 0;
+        _power.Visible = mix && _preset.SelectedIndex != 0;
+        if (_preset.SelectedIndex == 0) _boost.Checked = false;
         _seven.Enabled = Selected is { Channels: >= 8 };
         if (!_seven.Enabled && _seven.Checked) _seven.Checked = false;
         StopPreview();
