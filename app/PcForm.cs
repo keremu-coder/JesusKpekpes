@@ -100,7 +100,7 @@ sealed class PcForm : Form
         - Wired adapter power saving off
         - SysMain, DiagTrack and Windows Search disabled
         - Windows Update will not install drivers or reboot while you are logged in
-        - Xbox apps and Game Bar removed. The "Get an app to open this ms-gamebar link" window is silenced
+        - Game Bar and all Xbox apps removed, Xbox background services off (DS4Windows is not affected). The "Get an app to open this ms-gamebar link" window is silenced
         - High priority for the game
         - Controller timer and strafe profile, only if DS4Windows is there
         - Secure Boot stays on

@@ -490,7 +490,19 @@ function Invoke-PcGameProcess {
 # controller's Xbox button calls them. Those two links are given a hidden handler that does nothing,
 # so nobody sees that window. If Game Bar is installed again, the hidden handler steps aside.
 # On dual-CCD X3D chips Game Bar is kept: AMD's V-Cache driver needs it.
-function Get-XboxPatterns { return @('*Microsoft.XboxGamingOverlay*', '*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*') }
+# Everything Xbox that Battle.net and DS4Windows do not need. DS4Windows makes its virtual controller with the
+# ViGEmBus driver, which is not an app and is never touched here. Games from the Microsoft Store or Game Pass for PC
+# need Gaming Services and the Identity Provider; set RemoveXboxApps to false in config.json if you ever play those.
+function Get-XboxPatterns {
+    return @('*Microsoft.XboxGamingOverlay*', '*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*',
+             '*Microsoft.GamingApp*', '*Microsoft.XboxApp*', '*Microsoft.GamingServices*', '*Microsoft.XboxIdentityProvider*', '*Microsoft.Xbox.TCUI*')
+}
+# Game Bar stays on dual-CCD X3D chips (AMD's V-Cache driver needs it); the rest of Xbox may still go there.
+function Get-XboxActivePatterns {
+    $all = @(Get-XboxPatterns)
+    if (-not (Get-PcCpuPolicy).RemoveGameBar) { $all = @($all | Where-Object { $_ -notmatch 'XboxGamingOverlay' }) }
+    return $all
+}
 
 # A system app that Windows itself protects cannot be removed by anyone. It is not a failure of this tool.
 function Test-KAppxKeptByWindows {
@@ -564,11 +576,9 @@ function Repair-PcGameBarProtocol {
 
 function Invoke-PcXbox {
     if (-not (Get-PcCpuPolicy).RemoveGameBar) {
-        Write-Say ('  kept (' + (Get-PcCpuPolicy).Reason + ')') 'DarkGray'
-        Repair-PcGameBarProtocol
-        return
+        Write-Say ('  Game Bar kept (' + (Get-PcCpuPolicy).Reason + ')') 'DarkGray'
     }
-    foreach ($pat in (Get-XboxPatterns)) {
+    foreach ($pat in (Get-XboxActivePatterns)) {
         foreach ($pkg in @(Get-AppxPackage -AllUsers $pat -ErrorAction SilentlyContinue)) {
             [void](Add-KEntry ('appx|' + $pkg.Name) @{ Type = 'appx'; Name = $pkg.Name; Label = ('Reinstall "' + $pkg.Name + '" from the Microsoft Store (Windows cannot restore a removed app by itself)') })
             if (-not $script:WhatIfMode) { try { Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue } catch { } }
@@ -584,7 +594,7 @@ function Invoke-PcXbox {
 
 # ---------------- services ----------------
 function Get-PcServices {
-    $s = @('SysMain', 'DiagTrack', 'WSearch', 'TabletInputService', 'MapsBroker', 'RetailDemo', 'Fax', 'RemoteRegistry')
+    $s = @('SysMain', 'DiagTrack', 'WSearch', 'TabletInputService', 'MapsBroker', 'RetailDemo', 'Fax', 'RemoteRegistry', 'XblAuthManager', 'XblGameSave', 'XboxGipSvc', 'XboxNetApiSvc')
     if (Test-HasNvidia) { $s += 'NvTelemetryContainer' }
     return $s
 }
@@ -818,17 +828,18 @@ public static extern int NtQueryTimerResolution(out uint MinimumResolution, out 
     else { [void]$r.Add((New-KResult 'TRIM enabled' 'FAIL' ('found ' + $tr) 'Disk')) }
 
     # Xbox apps
-    if ($Cfg.RemoveXboxApps -and -not (Get-PcCpuPolicy).RemoveGameBar) {
-        [void]$r.Add((New-KResult 'Xbox / Game Bar apps' 'NA' ('kept on purpose: ' + (Get-PcCpuPolicy).Reason) 'Xbox apps'))
-    } elseif ($Cfg.RemoveXboxApps) {
-        foreach ($pat in (Get-XboxPatterns)) {
+    if ($Cfg.RemoveXboxApps) {
+        if (-not (Get-PcCpuPolicy).RemoveGameBar) {
+            [void]$r.Add((New-KResult 'Game Bar' 'NA' ('kept on purpose: ' + (Get-PcCpuPolicy).Reason) 'Xbox apps'))
+        }
+        foreach ($pat in (Get-XboxActivePatterns)) {
             $label = 'Removed: ' + ($pat -replace '\*', '')
             $left = @(Get-AppxPackage -AllUsers $pat -ErrorAction SilentlyContinue)
             if ($left.Count -eq 0) { [void]$r.Add((New-KResult $label 'PASS' '' 'Xbox apps')) }
             elseif (Test-KAppxKeptByWindows $left) { [void]$r.Add((New-KResult $label 'NA' 'Windows keeps this one and does not allow removing it. It does nothing on its own.' 'Xbox apps')) }
             else { [void]$r.Add((New-KResult $label 'FAIL' 'still installed' 'Xbox apps')) }
         }
-        if (-not (Get-AppxPackage -Name 'Microsoft.XboxGamingOverlay' -ErrorAction SilentlyContinue)) {
+        if ((Get-PcCpuPolicy).RemoveGameBar -and -not (Get-AppxPackage -Name 'Microsoft.XboxGamingOverlay' -ErrorAction SilentlyContinue)) {
             foreach ($link in (Get-KGameBarLinks)) {
                 $now = ''
                 try { $now = [string](Get-Item -LiteralPath ('HKCU:\Software\Classes\' + $link + '\shell\open\command') -ErrorAction SilentlyContinue).GetValue('') } catch { }
