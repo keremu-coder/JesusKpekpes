@@ -49,7 +49,7 @@ function Get-KDefaultConfig {
         GameProcessTweaks  = $true   # CPU/IO priority entries, GPU preference, QoS for cod.exe
         DefenderExclusions = $true   # exact-path exclusions for the game, Battle.net, DS4Windows
         WindowsUpdateBlock = $true   # no driver updates via Windows Update, no auto-reboot, no Store auto-download
-        RemoveXboxApps     = $true   # Game Bar / Xbox overlay apps
+        RemoveXboxApps     = $true   # Game Bar and every Xbox app and service (not needed for Battle.net + DS4Windows; set $false for Store / Game Pass games)
         DisableServices    = $true   # SysMain, DiagTrack, WSearch and friends
         HvciOff            = $false  # OPT-IN. Memory integrity / VBS / hypervisor off (lowers security, breaks WSL2/Hyper-V)
         GameModeOff        = $true   # Game Mode off, as before (never on dual-CCD X3D chips: AMD's V-Cache driver relies on it)

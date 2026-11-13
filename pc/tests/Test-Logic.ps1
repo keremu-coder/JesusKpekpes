@@ -578,6 +578,10 @@ Assert-That 'Windows Security is never turned off' (Test-KStartupProtected 'Secu
 Assert-That 'a normal startup item is allowed' (-not (Test-KStartupProtected 'OneDrive'))
 Assert-That 'the shipped PresentMon matches the pinned hash' ((Test-KPresentMon) -eq '')
 Assert-That 'Game Bar itself is removed' (((Get-XboxPatterns) -join ' ') -match 'XboxGamingOverlay')
+$xp = (Get-XboxPatterns) -join ' '
+Assert-That 'the Xbox app, Gaming Services and the Identity Provider are removed' ($xp -match 'GamingApp' -and $xp -match 'GamingServices' -and $xp -match 'XboxIdentityProvider' -and $xp -match 'Xbox\.TCUI')
+Assert-That 'no controller driver or DS4Windows pattern is in the Xbox list' ($xp -notmatch 'ViGEm|DS4|Xbox360|xusb|HidGuardian')
+Assert-That 'Xbox background services are switched off' ((@(Get-PcServices) -contains 'XblAuthManager') -and (@(Get-PcServices) -contains 'XboxGipSvc'))
 Assert-That 'both Game Bar links are silenced' ((@(Get-KGameBarLinks) -contains 'ms-gamebar') -and (@(Get-KGameBarLinks) -contains 'ms-gamingoverlay'))
 Assert-That 'our hidden handler is recognised' (Test-KGameBarQuietHandler (Get-KGameBarQuietCommand 'C:\ProgramData\x\pc\gamebar-quiet.vbs'))
 Assert-That 'a real Game Bar handler is not taken for ours' (-not (Test-KGameBarQuietHandler 'C:\Program Files\WindowsApps\Microsoft.XboxGamingOverlay\GameBar.exe "%1"'))
