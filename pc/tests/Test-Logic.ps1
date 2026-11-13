@@ -585,6 +585,18 @@ Assert-That 'a missing Game Bar is silenced' (Test-KGameBarNeedsQuiet $false)
 Assert-That 'an installed Game Bar is left alone' (-not (Test-KGameBarNeedsQuiet $true))
 Assert-That 'the quiet handler is hidden' ((Get-KGameBarQuietCommand 'C:\q.vbs') -match 'wscript.exe //B' -and (Get-KGameBarQuietCommand 'C:\q.vbs') -match 'C:\\q.vbs')
 
+# The Game Bar link needs a real default value written. The old code wrote it through a read-only key and silently failed.
+$linkKey = 'HKCU:\Software\Classes\KpekpesTestLink'
+$gotDefault = ''
+try {
+    New-Item -Path $linkKey -Force -ErrorAction Stop | Out-Null
+    Write-KRegDefault $linkKey 'URL:test'
+    $gotDefault = [string](Get-Item -LiteralPath $linkKey).GetValue('')
+} catch { }
+Remove-Item -LiteralPath $linkKey -Recurse -Force -ErrorAction SilentlyContinue
+Assert-That 'a registry default value is really written' ($gotDefault -eq 'URL:test')
+Assert-That 'a protected Windows app is not counted as a failure' ((Test-KAppxKeptByWindows @([pscustomobject]@{ NonRemovable = $true; SignatureKind = 'System' })) -and -not (Test-KAppxKeptByWindows @([pscustomobject]@{ NonRemovable = $false; SignatureKind = 'Store' })))
+
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
 Write-Host ('{0} passed, {1} failed' -f $script:pass, $script:fail) -ForegroundColor $(if ($script:fail -eq 0) { 'Green' } else { 'Red' })
