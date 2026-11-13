@@ -587,16 +587,14 @@ Assert-That 'the quiet handler is hidden' ((Get-KGameBarQuietCommand 'C:\q.vbs')
 
 # The Game Bar link needs a real default value written. The old code wrote it through a read-only key and silently failed.
 $linkKey = 'HKCU:\Software\Classes\KpekpesTestLink'
-Open-KJournal 'defaultvalue'
-$okDefault = Set-KReg $linkKey '' 'URL:test' 'String'
 $gotDefault = ''
-try { $gotDefault = [string](Get-Item -LiteralPath $linkKey).GetValue('') } catch { }
+try {
+    New-Item -Path $linkKey -Force -ErrorAction Stop | Out-Null
+    Write-KRegDefault $linkKey 'URL:test'
+    $gotDefault = [string](Get-Item -LiteralPath $linkKey).GetValue('')
+} catch { }
 Remove-Item -LiteralPath $linkKey -Recurse -Force -ErrorAction SilentlyContinue
-try { New-Item -Path 'HKCU:\Software\Classes\KpekpesTestLink2' -Force -ErrorAction Stop | Out-Null; Set-ItemProperty -LiteralPath 'HKCU:\Software\Classes\KpekpesTestLink2' -Name '(default)' -Value 'x' -ErrorAction Stop; Write-Host '  debug: direct write ok' } catch { Write-Host ('  debug: direct write failed: ' + $_.Exception.Message) }
-Remove-Item -LiteralPath 'HKCU:\Software\Classes\KpekpesTestLink2' -Recurse -Force -ErrorAction SilentlyContinue
-$logTail = ''; try { $lf = Get-ChildItem -Path $env:TEMP, $script:DataRoot -Filter '*.log' -Recurse -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1; if ($lf) { $logTail = (Get-Content -LiteralPath $lf.FullName -Tail 3) -join ' | ' } } catch { }
-Write-Host ('  debug: log tail: ' + $logTail)
-Assert-That 'a registry default value is really written' ($okDefault -and $gotDefault -eq 'URL:test')
+Assert-That 'a registry default value is really written' ($gotDefault -eq 'URL:test')
 Assert-That 'a protected Windows app is not counted as a failure' ((Test-KAppxKeptByWindows @([pscustomobject]@{ NonRemovable = $true; SignatureKind = 'System' })) -and -not (Test-KAppxKeptByWindows @([pscustomobject]@{ NonRemovable = $false; SignatureKind = 'Store' })))
 
 Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue

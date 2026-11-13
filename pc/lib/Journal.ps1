@@ -147,6 +147,15 @@ function Register-NewKeys {
     foreach ($m in $arr) { [void](Add-KEntry ('key|' + $m) @{ Type = 'key'; Path = $m }) }
 }
 
+# Get-Item opens a key read-only, so SetValue on it is refused. Set-ItemProperty opens it for writing.
+# The value is read back, so a write that did not stick is an error and not a silent success.
+function Write-KRegDefault {
+    param([string]$Path, [string]$Value)
+    Set-ItemProperty -LiteralPath $Path -Name '(default)' -Value $Value -ErrorAction Stop
+    $back = [string](Get-Item -LiteralPath $Path -ErrorAction Stop).GetValue('')
+    if ($back -ne $Value) { throw 'the default value did not stick' }
+}
+
 function Set-KReg {
     param([string]$Path, [string]$Name, $Value, [string]$Kind = 'DWord')
     if ($script:WhatIfMode) { Write-KLog ('[whatif] reg ' + $Path + ' ' + $Name + ' = ' + $Value); return $true }
@@ -161,10 +170,7 @@ function Set-KReg {
         [void](Add-KEntry ('reg|' + $Path + '|' + $Name) @{ Type = 'reg'; Path = $Path; Name = $Name; Existed = $st.Existed; Kind = $st.Kind; Value = $saved; Wrote = (ConvertTo-JsonSafe $v $Kind); WroteKind = $Kind })
         if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
         if ($Name -eq '') {
-            # Get-Item opens the key read-only, so SetValue on it is refused. Set-ItemProperty opens it for writing.
-            Set-ItemProperty -LiteralPath $Path -Name '(default)' -Value $v -ErrorAction Stop
-            $back = [string](Get-Item -LiteralPath $Path -ErrorAction Stop).GetValue('')
-            if ($back -ne [string]$v) { throw 'the default value did not stick' }
+            Write-KRegDefault $Path ([string]$v)
         } else {
             New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Kind -Value $v -Force -ErrorAction Stop | Out-Null
         }
