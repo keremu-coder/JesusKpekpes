@@ -161,7 +161,10 @@ function Set-KReg {
         [void](Add-KEntry ('reg|' + $Path + '|' + $Name) @{ Type = 'reg'; Path = $Path; Name = $Name; Existed = $st.Existed; Kind = $st.Kind; Value = $saved; Wrote = (ConvertTo-JsonSafe $v $Kind); WroteKind = $Kind })
         if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force -ErrorAction Stop | Out-Null }
         if ($Name -eq '') {
-            (Get-Item -LiteralPath $Path).SetValue('', $v)
+            # Get-Item opens the key read-only, so SetValue on it is refused. Set-ItemProperty opens it for writing.
+            Set-ItemProperty -LiteralPath $Path -Name '(default)' -Value $v -ErrorAction Stop
+            $back = [string](Get-Item -LiteralPath $Path -ErrorAction Stop).GetValue('')
+            if ($back -ne [string]$v) { throw 'the default value did not stick' }
         } else {
             New-ItemProperty -LiteralPath $Path -Name $Name -PropertyType $Kind -Value $v -Force -ErrorAction Stop | Out-Null
         }

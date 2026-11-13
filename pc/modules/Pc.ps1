@@ -492,6 +492,17 @@ function Invoke-PcGameProcess {
 # On dual-CCD X3D chips Game Bar is kept: AMD's V-Cache driver needs it.
 function Get-XboxPatterns { return @('*Microsoft.XboxGamingOverlay*', '*Microsoft.XboxSpeechToTextOverlay*', '*Microsoft.XboxGameCallableUI*') }
 
+# A system app that Windows itself protects cannot be removed by anyone. It is not a failure of this tool.
+function Test-KAppxKeptByWindows {
+    param($Packages)
+    foreach ($pkg in @($Packages)) {
+        $kept = $false
+        try { $kept = ([bool]$pkg.NonRemovable) -or ([string]$pkg.SignatureKind -eq 'System') } catch { }
+        if (-not $kept) { return $false }
+    }
+    return $true
+}
+
 function Get-KGameBarLinks { return @('ms-gamebar', 'ms-gamingoverlay') }
 
 function Test-KGameBarNeedsQuiet {
@@ -534,19 +545,21 @@ function Repair-PcGameBarProtocol {
         [IO.File]::WriteAllText($vbs, "' Stops Windows asking for an app to open ms-gamebar.`r`n")
     }
     $changed = $false
+    $failed = $false
     foreach ($link in (Get-KGameBarLinks)) {
         $root = 'HKCU:\Software\Classes\' + $link
         $commandKey = $root + '\shell\open\command'
         $now = ''
         try { $now = [string](Get-Item -LiteralPath $commandKey -ErrorAction SilentlyContinue).GetValue('') } catch { }
         if ($now -eq $cmd) { continue }
-        [void](Set-KReg $root '' ('URL:' + $link) 'String')
-        [void](Set-KReg $root 'URL Protocol' '' 'String')
-        [void](Set-KReg $root 'NoOpenWith' '' 'String')
-        [void](Set-KReg $commandKey '' $cmd 'String')
-        $changed = $true
+        $okLink = (Set-KReg $root '' ('URL:' + $link) 'String')
+        $okLink = ((Set-KReg $root 'URL Protocol' '' 'String') -and $okLink)
+        $okLink = ((Set-KReg $root 'NoOpenWith' '' 'String') -and $okLink)
+        $okLink = ((Set-KReg $commandKey '' $cmd 'String') -and $okLink)
+        if ($okLink) { $changed = $true } else { $failed = $true; Write-KLog ('could not silence ' + $link) 'WARN' }
     }
     if ($changed) { Write-Say '  the ms-gamebar prompt is silenced' 'Green' }
+    if ($failed) { Write-Say '  the ms-gamebar prompt could not be silenced. Windows may still ask for an app.' 'Yellow' }
 }
 
 function Invoke-PcXbox {
@@ -810,8 +823,10 @@ public static extern int NtQueryTimerResolution(out uint MinimumResolution, out 
     } elseif ($Cfg.RemoveXboxApps) {
         foreach ($pat in (Get-XboxPatterns)) {
             $label = 'Removed: ' + ($pat -replace '\*', '')
-            if (Get-AppxPackage -AllUsers $pat -ErrorAction SilentlyContinue) { [void]$r.Add((New-KResult $label 'FAIL' 'still installed' 'Xbox apps')) }
-            else { [void]$r.Add((New-KResult $label 'PASS' '' 'Xbox apps')) }
+            $left = @(Get-AppxPackage -AllUsers $pat -ErrorAction SilentlyContinue)
+            if ($left.Count -eq 0) { [void]$r.Add((New-KResult $label 'PASS' '' 'Xbox apps')) }
+            elseif (Test-KAppxKeptByWindows $left) { [void]$r.Add((New-KResult $label 'NA' 'Windows keeps this one and does not allow removing it. It does nothing on its own.' 'Xbox apps')) }
+            else { [void]$r.Add((New-KResult $label 'FAIL' 'still installed' 'Xbox apps')) }
         }
         if (-not (Get-AppxPackage -Name 'Microsoft.XboxGamingOverlay' -ErrorAction SilentlyContinue)) {
             foreach ($link in (Get-KGameBarLinks)) {

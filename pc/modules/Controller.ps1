@@ -80,6 +80,16 @@ function Get-FileSha256 {
 }
 
 # ---------------- install ----------------
+# The optimizer from the last run is still running and holds its own file open. It is stopped before the new copy goes in,
+# and step 7 starts it again.
+function Stop-CtlOptimizer {
+    $name = [IO.Path]::GetFileNameWithoutExtension($script:CtlExeName)
+    foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch { Write-KLog ('could not stop ' + $name + ': ' + $_.Exception.Message) 'WARN' }
+    }
+    Start-Sleep -Milliseconds 500
+}
+
 function Install-Controller {
     param($Cfg, [string]$SourceDir)
     $res = [pscustomobject]@{ Ok = $false; Message = ''; Steps = @() }
@@ -121,7 +131,12 @@ function Install-Controller {
     $batDst = Join-Path $d.Bin 'controller_optimizer.bat'
     $vbsDst = Join-Path $d.Bin 'run_hidden.vbs'
     foreach ($f in @($exeDst, $batDst, $vbsDst)) { [void](Add-KEntry ('file|' + $f) @{ Type = 'file'; Path = $f }) }
-    Copy-Item -LiteralPath $exeSrc -Destination $exeDst -Force
+    Stop-CtlOptimizer
+    $copied = $false
+    for ($try = 1; $try -le 4 -and -not $copied; $try++) {
+        try { Copy-Item -LiteralPath $exeSrc -Destination $exeDst -Force -ErrorAction Stop; $copied = $true }
+        catch { if ($try -lt 4) { Start-Sleep -Seconds 1; Stop-CtlOptimizer } else { throw } }
+    }
     $bat = (Get-Content -LiteralPath (Join-Path $ctl 'controller_optimizer.bat.template') -Raw -Encoding UTF8)
     $keepAwake = [string]$Cfg.Controller.KeepAwake
     $tunedPolicy = [string]$Cfg.Controller.TunedProfilePolicy
