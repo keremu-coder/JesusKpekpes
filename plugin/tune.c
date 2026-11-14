@@ -209,7 +209,8 @@ static float finish(Lane* lane, const Split* part, float foot_gain, float tick_g
     float y = part->other + part->foot_band * foot_gain + part->tick_band * tick_gain + part->gun_band * gun_gain;
     float mag;
     if (body_gain > 1.f) y *= body_gain;
-    if (!isfinite(y)) return 0.f;
+    /* A NaN or an infinity must not leave the plug-in. y != y is the NaN test, and it does not need a C99 macro. */
+    if (y != y || y > 1e20f || y < -1e20f) return 0.f;
     mag = fabsf(y);
     if (mag <= 0.8912509f) return y;
     return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
