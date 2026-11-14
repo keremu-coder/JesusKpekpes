@@ -79,11 +79,30 @@ typedef struct {
     float fast_a, fast_r, slow_a, slow_r;
 } Lane;
 
+/* Steady-ambience trim, the Calm parameter. It is off unless Calm is above 0, and then the output of every other
+   part of this file is unchanged. It turns down only what is outside the foot band and the tick band, and only after
+   that sound has stayed steady for half a second. A change in any band lets it go again within about 12 ms. */
+typedef struct {
+    Stage tick;
+    float foot_f, foot_s, tick_f, tick_s, gun_f, gun_s, rest_f, rest_s;
+} AmbLane;
+
+typedef struct {
+    AmbLane lane[8];
+    float fast, slow, reference, engage, release;
+    float rest_ref;
+    float gain;
+    float floor;
+    int hold, steady, hold_len, steady_len;
+} Amb;
+
 typedef struct {
     Lane lane[8];
     float rate;
     float hit;
     int mode;
+    float calm;
+    Amb amb;
 } Bank;
 
 static void set_band(Stage* stage, float hz, float q, float rate) {
@@ -205,6 +224,85 @@ static void consider(float fast, float slow, float* best_fast, float* best_ratio
     if (ratio > *best_ratio) *best_ratio = ratio;
 }
 
+#define AMB_MAX_DB 9.f
+
+static void amb_arm(Bank* bank) {
+    Amb* a = &bank->amb;
+    float rate = bank->rate < 1000.f ? 48000.f : bank->rate;
+    int ch;
+    memset(a, 0, sizeof *a);
+    for (ch = 0; ch < 8; ch++) set_band(&a->lane[ch].tick, 3200.f, 1.1f, rate);
+    a->fast = 1.f - expf(-1.f / (rate * 0.008f));
+    a->slow = 1.f - expf(-1.f / (rate * 0.120f));
+    a->reference = 1.f - expf(-1.f / (rate * 0.800f));
+    a->engage = 1.f - expf(-1.f / (rate * 0.300f));
+    a->release = 1.f - expf(-1.f / (rate * 0.012f));
+    a->hold_len = (int)(rate * 0.150f);
+    a->steady_len = (int)(rate * 0.500f);
+    a->floor = powf(10.f, -AMB_MAX_DB * bank->calm / 20.f);
+    a->gain = 1.f;
+}
+
+static void amb_follow(float* fast, float* slow, float level, float fast_a, float slow_a) {
+    *fast += (level - *fast) * fast_a;
+    *slow += (level - *slow) * slow_a;
+    if (*fast < 1e-20f) *fast = 0.f;
+    if (*slow < 1e-20f) *slow = 0.f;
+}
+
+static int amb_moved(float fast, float slow, float limit) {
+    return fast > 1e-4f && fast > slow * limit;
+}
+
+/* One gain for every ear, so the gap between the ears is kept. Each array holds this sample of one part for every ear:
+   the foot band, the tick band, the gun band, and everything outside the foot and tick bands. */
+static float amb_gain(Bank* bank, const float* foot, const float* tickb, const float* gun, const float* rest, i32 nch) {
+    Amb* a = &bank->amb;
+    float strongest_f = 0.f, strongest_s = 0.f, target, coeff;
+    int moved = 0;
+    i32 ch;
+    for (ch = 0; ch < nch; ch++) {
+        AmbLane* l = &a->lane[ch];
+        amb_follow(&l->foot_f, &l->foot_s, fabsf(foot[ch]), a->fast, a->slow);
+        amb_follow(&l->tick_f, &l->tick_s, fabsf(tickb[ch]), a->fast, a->slow);
+        amb_follow(&l->gun_f, &l->gun_s, fabsf(gun[ch]), a->fast, a->slow);
+        amb_follow(&l->rest_f, &l->rest_s, fabsf(rest[ch]), a->fast, a->slow);
+        if (amb_moved(l->foot_f, l->foot_s, 1.25f) || amb_moved(l->tick_f, l->tick_s, 1.25f) ||
+            amb_moved(l->gun_f, l->gun_s, 1.25f) || amb_moved(l->rest_f, l->rest_s, 1.4f))
+            moved = 1;
+        if (l->rest_s > strongest_s) { strongest_s = l->rest_s; strongest_f = l->rest_f; }
+    }
+    a->rest_ref += (strongest_s - a->rest_ref) * a->reference;
+    if (moved) {
+        a->hold = a->hold_len;
+        a->steady = 0;
+    } else if (a->hold > 0) {
+        a->hold--;
+        a->steady = 0;
+    } else if (strongest_s > 3e-4f && strongest_f > strongest_s * 0.8f &&
+               strongest_s < a->rest_ref * 1.19f && strongest_s * 1.19f > a->rest_ref) {
+        if (a->steady < a->steady_len) a->steady++;
+    } else {
+        a->steady = 0;
+    }
+    target = a->steady >= a->steady_len ? a->floor : 1.f;
+    coeff = target < a->gain ? a->engage : a->release;
+    a->gain += (target - a->gain) * coeff;
+    if (a->gain > 0.99999f) a->gain = 1.f;
+    return a->gain;
+}
+
+/* The same as finish, with the trim added before the limiter. */
+static float finish_calm(Lane* lane, const Split* part, float foot_gain, float rest, float calm_gain) {
+    float gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
+    float y = part->other + part->foot_band * foot_gain + part->gun_band * gun_gain;
+    float mag;
+    if (calm_gain != 1.f) y += (calm_gain - 1.f) * rest;
+    mag = fabsf(y);
+    if (mag <= 0.8912509f) return y;
+    return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
+}
+
 static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 frames) {
     Bank* bank = effect->object;
     float max_weight = 7.f * bank->hit;
@@ -213,8 +311,8 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
     if (nch > 8) nch = 8;
     for (i = 0; i < frames; i++) {
         float best_w_fast = 0.f, best_w_ratio = 1.f, best_t_fast = 0.f, best_t_ratio = 1.f;
-        float weight_gain, tick_gain;
-        float weight_b[8] = { 0 }, tick_b[8] = { 0 }, gun_b[8] = { 0 }, other_b[8] = { 0 };
+        float weight_gain, tick_gain, calm_gain = 1.f;
+        float weight_b[8] = { 0 }, tick_b[8] = { 0 }, gun_b[8] = { 0 }, other_b[8] = { 0 }, rest_b[8] = { 0 };
         for (ch = 0; ch < nch; ch++) {
             Lane* lane = &bank->lane[ch];
             float x, w, t, g;
@@ -227,6 +325,7 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
             tick_b[ch] = t;
             gun_b[ch] = g;
             other_b[ch] = x - w - t - g;
+            if (bank->calm > 0.f) rest_b[ch] = x - w - t;
             follow(&lane->weight_fast, fabsf(w), lane->fast_a, lane->fast_r);
             follow(&lane->weight_slow, fabsf(w), lane->slow_a, lane->slow_r);
             follow(&lane->tick_fast, fabsf(t), lane->fast_a, lane->fast_r);
@@ -237,6 +336,7 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
         }
         weight_gain = transient_gain(best_w_fast, best_w_ratio, max_weight);
         tick_gain = transient_gain(best_t_fast, best_t_ratio, max_tick);
+        if (bank->calm > 0.f) calm_gain = amb_gain(bank, weight_b, tick_b, gun_b, rest_b, nch);
         for (ch = 0; ch < nch; ch++) {
             Lane* lane;
             float gun_gain, y, mag;
@@ -244,6 +344,7 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
             lane = &bank->lane[ch];
             gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
             y = other_b[ch] + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
+            if (calm_gain != 1.f) y += (calm_gain - 1.f) * rest_b[ch];
             mag = fabsf(y);
             if (mag > 0.8912509f)
                 y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
@@ -264,16 +365,25 @@ static void replace(Effect* effect, float** inputs, float** outputs, i32 frames)
     if (!bank || frames < 1 || !inputs || !outputs) return;
     for (i = 0; i < frames; i++) {
         float strongest = 0.f;
-        float foot_gain;
+        float foot_gain, calm_gain = 1.f;
+        float foot_b[8] = { 0 }, tick_b[8] = { 0 }, gun_b[8] = { 0 }, rest_b[8] = { 0 };
         for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
             if (!inputs[ch] || !outputs[ch]) continue;
             split(&bank->lane[ch], inputs[ch][i], &part[ch]);
             if (bank->lane[ch].foot_env > strongest) strongest = bank->lane[ch].foot_env;
+            if (bank->calm > 0.f) {
+                foot_b[ch] = part[ch].foot_band;
+                gun_b[ch] = part[ch].gun_band;
+                tick_b[ch] = tick(&bank->amb.lane[ch].tick, inputs[ch][i]);
+                rest_b[ch] = inputs[ch][i] - foot_b[ch] - tick_b[ch];
+            }
         }
         foot_gain = lift(strongest);
+        if (bank->calm > 0.f) calm_gain = amb_gain(bank, foot_b, tick_b, gun_b, rest_b, effect->inputs < 8 ? effect->inputs : 8);
         for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
             if (!inputs[ch] || !outputs[ch]) continue;
-            outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain);
+            if (bank->calm > 0.f) outputs[ch][i] = finish_calm(&bank->lane[ch], &part[ch], foot_gain, rest_b[ch], calm_gain);
+            else outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain);
         }
     }
 }
@@ -290,12 +400,21 @@ static void set_param(Effect* effect, i32 index, float value) {
             if (mode) arm_nova(&bank->lane[ch], bank->rate);
             else arm(&bank->lane[ch], bank->rate);
         }
+        amb_arm(bank);
         return;
     }
     if (index == 1) {
         if (value < 0.f) value = 0.f;
         if (value > 1.f) value = 1.f;
         bank->hit = value;
+        return;
+    }
+    if (index == 2) {
+        if (!(value > 0.f)) value = 0.f;
+        if (value > 1.f) value = 1.f;
+        if (value == bank->calm) return;
+        bank->calm = value;
+        amb_arm(bank);
     }
 }
 
@@ -304,6 +423,7 @@ static float get_param(Effect* effect, i32 index) {
     if (!bank) return 0.f;
     if (index == 0) return bank->mode ? 1.f : 0.f;
     if (index == 1) return bank->hit;
+    if (index == 2) return bank->calm;
     return 0.f;
 }
 
@@ -325,10 +445,11 @@ static iptr dispatch(Effect* effect, i32 op, i32 index, iptr value, void* ptr, f
             if (bank->mode) arm_nova(&bank->lane[ch], opt);
             else arm(&bank->lane[ch], opt);
         }
+        amb_arm(bank);
         return 1;
     }
     if (op == OP_PARAM_NAME && ptr) {
-        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : "";
+        const char* name = index == 0 ? "Nova" : index == 1 ? "Hit" : index == 2 ? "Calm" : "";
         strncpy((char*)ptr, name, 8);
         return 1;
     }
@@ -361,6 +482,8 @@ EXPORT Effect* VSTPluginMain(void* host) {
     bank->rate = 48000.f;
     bank->hit = 1.f;
     bank->mode = 0;
+    bank->calm = 0.f;
+    amb_arm(bank);
     effect->magic = 0x56737450;
     effect->dispatch = dispatch;
     effect->older = (void (*)(Effect*, float**, float**, i32))replace;
@@ -369,7 +492,7 @@ EXPORT Effect* VSTPluginMain(void* host) {
     effect->inputs = 8;
     effect->outputs = 8;
     effect->flags = 1 << 4;
-    effect->params = 2;
+    effect->params = 3;
     effect->delay = 0;
     effect->object = bank;
     effect->identity = 0x4A6B5475;
@@ -448,7 +571,7 @@ static int check_nova(void) {
     memset(name1, 0, sizeof name1);
     dispatch(e, OP_PARAM_NAME, 0, 0, name0, 0.f);
     dispatch(e, OP_PARAM_NAME, 1, 0, name1, 0.f);
-    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 2) bad = 1;
+    if (strcmp(name0, "Nova") != 0 || strcmp(name1, "Hit") != 0 || e->params != 3) bad = 1;
     if (get_param(e, 0) != 0.f || get_param(e, 1) != 1.f) bad = 1;
     e->set_param(e, 0, 1.f);
     e->set_param(e, 1, 1.f);
@@ -483,6 +606,182 @@ static int check_nova(void) {
         for (i = 0; i < 64; i++) if (z[i] != 0.f || zr[i] != 0.f) bad = 1;
     }
     dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    return bad;
+}
+
+/* Calm. Steady background is trimmed. Nothing that is not steady may be. */
+enum { calm_max = 480000 };
+static float calm_in[2][calm_max], calm_a[2][calm_max], calm_b[2][calm_max];
+
+static float calm_noise(unsigned* seed) {
+    *seed = *seed * 1664525u + 1013904223u;
+    return (float)(*seed >> 8) / 8388608.f - 1.f;
+}
+
+static double tone_pow(const float* x, int from, int count, double hz, double rate) {
+    double w = 6.283185307179586 * hz / rate, c = 2.0 * cos(w), s1 = 0, s2 = 0, s0;
+    int i;
+    for (i = 0; i < count; i++) { s0 = x[from + i] + c * s1 - s2; s2 = s1; s1 = s0; }
+    return (s1 * s1 + s2 * s2 - c * s1 * s2) / ((double)count * (double)count) + 1e-30;
+}
+
+static double db_of(double a, double b) { return 10.0 * log10(a / b); }
+
+static void calm_run(int mode, float calm, int rate, int n, float (*out)[calm_max]) {
+    Effect* e = VSTPluginMain(0);
+    float* in[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    float* ou[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+    in[0] = calm_in[0]; in[1] = calm_in[1]; ou[0] = out[0]; ou[1] = out[1];
+    dispatch(e, OP_RATE, 0, 0, 0, (float)rate);
+    if (mode) { e->set_param(e, 0, 1.f); e->set_param(e, 1, 1.f); }
+    if (calm > 0.f) e->set_param(e, 2, calm);
+    replace(e, in, ou, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+}
+
+/* The same input with Calm off (calm_a) and on (calm_b). */
+static void calm_pair(int mode, float calm, int rate, int n) {
+    calm_run(mode, 0.f, rate, n, calm_a);
+    calm_run(mode, calm, rate, n, calm_b);
+}
+
+/* Steady background at 700 Hz and 6 kHz, 15 dB quieter in the right ear. */
+static void calm_ambience(int rate, int n, int with_foot_tick) {
+    int i;
+    for (i = 0; i < n; i++) {
+        double t = (double)i / rate;
+        float s = (float)(0.03 * sin(6.283185307179586 * 700.0 * t) + 0.02 * sin(6.283185307179586 * 6000.0 * t));
+        if (with_foot_tick) s += (float)(0.02 * sin(6.283185307179586 * 180.0 * t) + 0.02 * sin(6.283185307179586 * 3200.0 * t));
+        calm_in[0][i] = s;
+        calm_in[1][i] = s * 0.17782794f;
+    }
+}
+
+static void calm_burst(float* x, int at, int len, double hz, double amp, int rate) {
+    int i;
+    for (i = 0; i < len; i++)
+        x[at + i] += (float)(amp * sin(6.283185307179586 * hz * (double)(at + i) / rate) * (0.5 - 0.5 * cos(6.283185307179586 * (double)i / len)));
+}
+
+#define CALM_FAIL(cond, ...) do { if (cond) { printf(__VA_ARGS__); bad = 1; } } while (0)
+
+static int check_calm(void) {
+    static const int rates[] = { 48000, 44100, 96000 };
+    int bad = 0, m, r, k, i, n, rate, from, len, at;
+    float calm;
+    double a7, a6, r7, ceiling;
+    unsigned seed = 7u;
+    char name2[9];
+
+    /* A. Steady background is trimmed, by no more than the setting, and the ears keep their gap. */
+    for (m = 0; m < 2; m++) for (r = 0; r < 3; r++) for (k = 0; k < 2; k++) {
+        rate = rates[r]; n = rate * 5; from = rate * 4; len = rate; calm = k ? 0.5f : 1.f;
+        ceiling = 9.0 * calm;
+        calm_ambience(rate, n, 0);
+        calm_pair(m, calm, rate, n);
+        a7 = db_of(tone_pow(calm_b[0], from, len, 700, rate), tone_pow(calm_a[0], from, len, 700, rate));
+        a6 = db_of(tone_pow(calm_b[0], from, len, 6000, rate), tone_pow(calm_a[0], from, len, 6000, rate));
+        r7 = db_of(tone_pow(calm_b[1], from, len, 700, rate), tone_pow(calm_a[1], from, len, 700, rate));
+        printf("calm steady mode %d rate %5d calm %.1f: 700 Hz %+.2f dB, 6 kHz %+.2f dB, ear gap moved %.2f dB\n", m, rate, calm, a7, a6, fabs(a7 - r7));
+        CALM_FAIL(a7 > -3.0 * calm || a6 > -3.0 * calm, "  FAIL: steady background was not trimmed enough\n");
+        CALM_FAIL(a7 < -(ceiling + 0.5) || a6 < -(ceiling + 0.5), "  FAIL: trimmed by more than the setting\n");
+        CALM_FAIL(fabs(a7 - r7) > 0.1, "  FAIL: the ears lost their gap\n");
+    }
+
+    /* B. A steady foot tone and tick tone sit inside the protected bands and must not move. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate * 5; from = rate * 4; len = rate;
+        calm_ambience(rate, n, 1);
+        calm_pair(m, 1.f, rate, n);
+        a7 = db_of(tone_pow(calm_b[0], from, len, 180, rate), tone_pow(calm_a[0], from, len, 180, rate));
+        a6 = db_of(tone_pow(calm_b[0], from, len, 3200, rate), tone_pow(calm_a[0], from, len, 3200, rate));
+        printf("calm protected mode %d: 180 Hz %+.2f dB, 3.2 kHz %+.2f dB\n", m, a7, a6);
+        CALM_FAIL(fabs(a7) > 0.5 || fabs(a6) > 0.5, "  FAIL: the foot or tick band moved\n");
+    }
+
+    /* C. A footstep on top of steady background. Its foot and tick tones must come through untouched, and the trim must let go. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate * 6; at = rate * 9 / 2; len = rate * 40 / 1000;
+        calm_ambience(rate, n, 0);
+        calm_burst(calm_in[0], at, len, 180.0, 0.04, rate);
+        calm_burst(calm_in[0], at, len, 3200.0, 0.04, rate);
+        calm_pair(m, 1.f, rate, n);
+        a7 = db_of(tone_pow(calm_b[0], at, len, 180, rate), tone_pow(calm_a[0], at, len, 180, rate));
+        a6 = db_of(tone_pow(calm_b[0], at, len, 3200, rate), tone_pow(calm_a[0], at, len, 3200, rate));
+        r7 = db_of(tone_pow(calm_b[0], at + rate * 8 / 100, rate / 10, 700, rate), tone_pow(calm_a[0], at + rate * 8 / 100, rate / 10, 700, rate));
+        printf("calm footstep mode %d: foot tone %+.2f dB, tick tone %+.2f dB, background 80-180 ms later %+.2f dB\n", m, a7, a6, r7);
+        CALM_FAIL(fabs(a7) > 0.3 || fabs(a6) > 0.3, "  FAIL: a footstep tone was turned down\n");
+        CALM_FAIL(r7 < -1.0, "  FAIL: the trim did not let go after a footstep\n");
+    }
+
+    /* C2. A footstep click outside the protected bands, over the same background. It is the hardest case. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate * 6; at = rate * 9 / 2; len = rate * 20 / 1000;
+        calm_ambience(rate, n, 0);
+        calm_burst(calm_in[0], at, len, 7500.0, 0.05, rate);
+        calm_pair(m, 1.f, rate, n);
+        a7 = db_of(tone_pow(calm_b[0], at, len, 7500, rate), tone_pow(calm_a[0], at, len, 7500, rate));
+        printf("calm click mode %d: 7.5 kHz footstep click %+.2f dB (steady background %+.2f dB)\n", m, a7, db_of(tone_pow(calm_b[0], at - rate / 4, rate / 8, 6000, rate), tone_pow(calm_a[0], at - rate / 4, rate / 8, 6000, rate)));
+        CALM_FAIL(a7 < -3.0, "  FAIL: a footstep click lost more than 3 dB\n");
+    }
+
+    /* D. Speech-like level changes are not steady. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate * 6; from = rate * 4; len = rate * 2;
+        for (i = 0; i < n; i++) {
+            double t = (double)i / rate;
+            calm_in[0][i] = (float)(0.03 * (1.0 + 0.8 * sin(6.283185307179586 * 4.0 * t)) * sin(6.283185307179586 * 700.0 * t));
+            calm_in[1][i] = calm_in[0][i];
+        }
+        calm_pair(m, 1.f, rate, n);
+        a7 = db_of(tone_pow(calm_b[0], from, len, 700, rate), tone_pow(calm_a[0], from, len, 700, rate));
+        printf("calm speech-like mode %d: %+.2f dB\n", m, a7);
+        CALM_FAIL(a7 < -0.5, "  FAIL: a modulated sound was trimmed\n");
+    }
+
+    /* E. A sound that keeps rising, like a vehicle coming closer, is not steady. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate * 5; from = rate * 4; len = rate;
+        for (i = 0; i < n; i++) {
+            double t = (double)i / rate;
+            calm_in[0][i] = (float)(0.003 * pow(10.0, t * 4.0 / 20.0) * sin(6.283185307179586 * 700.0 * t));
+            calm_in[1][i] = calm_in[0][i];
+        }
+        calm_pair(m, 1.f, rate, n);
+        a7 = db_of(tone_pow(calm_b[0], from, len, 700, rate), tone_pow(calm_a[0], from, len, 700, rate));
+        printf("calm rising mode %d: %+.2f dB\n", m, a7);
+        CALM_FAIL(a7 < -0.5, "  FAIL: a rising sound was trimmed\n");
+    }
+
+    /* F. Noise as background. Reported, and it may never exceed the setting. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate * 8; from = rate * 6; len = rate * 2;
+        for (i = 0; i < n; i++) { calm_in[0][i] = 0.05f * calm_noise(&seed); calm_in[1][i] = 0.05f * calm_noise(&seed); }
+        calm_pair(m, 1.f, rate, n);
+        a7 = db_of(energy(calm_b[0], from, len), energy(calm_a[0], from, len));
+        printf("calm noise mode %d: %+.2f dB\n", m, a7);
+        CALM_FAIL(a7 < -9.5, "  FAIL: noise was trimmed by more than the setting\n");
+    }
+
+    /* G. Silence stays silence. */
+    for (m = 0; m < 2; m++) {
+        rate = 48000; n = rate;
+        memset(calm_in, 0, sizeof calm_in);
+        calm_pair(m, 1.f, rate, n);
+        for (i = 0; i < n; i++) if (calm_b[0][i] != 0.f || calm_b[1][i] != 0.f) { bad = 1; printf("  FAIL: silence changed\n"); break; }
+    }
+
+    /* H. The setting itself. */
+    {
+        Effect* e = VSTPluginMain(0);
+        memset(name2, 0, sizeof name2);
+        dispatch(e, OP_PARAM_NAME, 2, 0, name2, 0.f);
+        CALM_FAIL(strcmp(name2, "Calm") != 0 || e->params != 3 || get_param(e, 2) != 0.f, "  FAIL: the Calm parameter is not there\n");
+        e->set_param(e, 2, 2.f);  CALM_FAIL(get_param(e, 2) != 1.f, "  FAIL: Calm above 1 must clamp to 1\n");
+        e->set_param(e, 2, -1.f); CALM_FAIL(get_param(e, 2) != 0.f, "  FAIL: Calm below 0 must clamp to 0\n");
+        dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    }
+    printf(bad ? "calm: FAILED\n" : "calm: all checks passed\n");
     return bad;
 }
 
@@ -564,6 +863,7 @@ int main(int argc, char** argv) {
     dispatch(effect, OP_CLOSE, 0, 0, 0, 0);
     if (!(quiet > 0.0008 && peak < 0.98f)) return 1;
     if (check_ears()) return 1;
-    return check_nova();
+    if (check_nova()) return 1;
+    return check_calm();
 }
 #endif
