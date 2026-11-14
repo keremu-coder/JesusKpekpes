@@ -1,5 +1,6 @@
 # Unreleased
 
+- Audio: while a step is a hit, the plug-in also lifts the whole step, up to 9 dB, scaled by Footstep hit. Hit at 0 leaves that extra lift off. A steady tone, a loud gun, and a loud impact are not turned up. Press Turn on once after updating.
 - **The program updates itself.** The first window shows an Update button when a newer release exists. It checks the
   SHA-256, starts the new copy once, swaps the files and undoes everything if a step fails.
 - **Every Xbox app and service is removed or switched off**, not only Game Bar. Controller drivers are not touched.
