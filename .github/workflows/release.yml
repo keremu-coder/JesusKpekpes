@@ -117,7 +117,7 @@ jobs:
           if ($env:GITHUB_REF_TYPE -ne 'tag') { gh release delete $tag --yes --cleanup-tag 2>$null | Out-Null }
           @(
             $signed
-            'There is no auto-update. Download the next build yourself.'
+            'Already installed? Open Jesus Kpekpes and press Update on the first window. Nothing to download. Only a copy that already has an Update button can do this; if yours has none, install this one once.'
             'Run JesusKpekpes-Setup.exe to install. Uninstall from Windows Settings puts the PC changes back and leaves audio as it is.'
             'Or extract JesusKpekpes-win-x64.zip and run JesusKpekpes.exe from inside it.'
             ''

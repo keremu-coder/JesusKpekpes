@@ -25,7 +25,7 @@ Monitor and frames. If Windows is running the monitor below the highest rate it 
 
 Startup menu. Tick a program to stop it opening with Windows. The program is not deleted. Windows Security and this program stay on. Undo turns the ones this window turned off back on.
 
-Install. JesusKpekpes-Setup.exe puts the program in Program Files, adds a Start menu shortcut, and adds an entry under Windows Settings, Apps. Uninstall from there puts the PC changes back and leaves audio as it is. The zip is the same program without the installer. The exe is not signed unless a certificate is stored in the repository secrets, and there is no auto-update.
+Install. JesusKpekpes-Setup.exe puts the program in Program Files, adds a Start menu shortcut, and adds an entry under Windows Settings, Apps. Uninstall from there puts the PC changes back and leaves audio as it is. The zip is the same program without the installer. The exe is not signed unless a certificate is stored in the repository secrets, and updates come from inside the program: the Update button appears on the first window when a newer release exists (see USING.txt for how it is checked and what to protect).
 
 Name the hitch watches for about 20 seconds while you play, then prints the driver or process behind the longest stall. It does not change a setting, it does not turn that driver off, and a name by itself does not add frames. If Windows will not give the trace, it says so and stops.
 

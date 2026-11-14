@@ -3,6 +3,10 @@ namespace JesusKpekpes;
 sealed class HomeForm : Form
 {
     readonly NotifyIcon _tray = new();
+    readonly Label _ver = new();
+    readonly Button _update;
+    Updater.Found? _found;
+    bool _updating;
     bool _quit;
 
     public HomeForm()
@@ -37,7 +41,13 @@ sealed class HomeForm : Form
         var check = Button("Sound check (compare two tunes)", 406, () => Open(new SoundCheckForm()));
         var bench = Button("Monitor and frames", 470, () => Open(new BenchForm()));
         var startup = Button("Startup menu", 534, () => Open(new StartupForm()));
-        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup]);
+        _update = Button("Update", 592, StartUpdate);
+        _update.Visible = false;
+        _ver.Text = "Version " + Updater.Current().ToString(3);
+        _ver.Font = new Font("Segoe UI", 8.5f);
+        _ver.ForeColor = Color.FromArgb(196, 184, 165);
+        _ver.Bounds = new Rectangle(28, 646, 404, 32);
+        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup, _update, _ver]);
         _tray.Icon = Window.Mark;
         _tray.Text = "Jesus Kpekpes";
         _tray.Visible = true;
@@ -47,6 +57,7 @@ sealed class HomeForm : Form
         Look.Menu(menu);
         _tray.ContextMenuStrip = menu;
         _tray.MouseDoubleClick += (_, _) => Reveal();
+        Shown += (_, _) => CheckForUpdate();
         Shown += (_, _) =>
         {
             if (AudioKit.Installed(AudioKit.Tools[0])) return;
@@ -57,6 +68,68 @@ sealed class HomeForm : Form
                 Open(form);
             });
         };
+    }
+
+    /// Quiet on purpose: no network, no release, no answer means no button and no message.
+    async void CheckForUpdate()
+    {
+        try
+        {
+            var current = Updater.Current();
+            var note = Updater.TakeResult();
+            if (note is not null) _ver.Text = note;
+            if (!Updater.CanUpdate(current)) return;
+            var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            _ = Task.Run(() => Updater.Tidy(dir));
+            var found = await Updater.Check(current);
+            if (found is null || IsDisposed) return;
+            _found = found;
+            _update.Text = "Update to version " + found.Version.ToString(3);
+            _update.Visible = true;
+            if (note is null) _ver.Text = "Version " + current.ToString(3) + ". Version " + found.Version.ToString(3) + " is ready.";
+        }
+        catch (Exception)
+        {
+            /* no answer is not an error */
+        }
+    }
+
+    async void StartUpdate()
+    {
+        if (_found is not { } found || _updating) return;
+        var ask = "Update to version " + found.Version.ToString(3) + "?\n\nJesus Kpekpes closes and opens again by itself. Your settings and the PC and audio changes stay as they are.";
+        if (MessageBox.Show(this, ask, "Update", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+        _updating = true;
+        _update.Enabled = false;
+        try
+        {
+            var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var staged = await Updater.Prepare(found, dir, new Progress<string>(text => _ver.Text = text));
+            if (!staged.Ok)
+            {
+                _ver.Text = "The update did not install: " + staged.Message + " You are still on the old version.";
+                return;
+            }
+            if (!Updater.StartFinish(staged, found.Version, dir))
+            {
+                _ver.Text = "The update could not be started. You are still on the old version.";
+                return;
+            }
+            _quit = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _ver.Text = "The update did not install: " + ex.Message + " You are still on the old version.";
+        }
+        finally
+        {
+            if (!_quit)
+            {
+                _updating = false;
+                if (!IsDisposed) _update.Enabled = true;
+            }
+        }
     }
 
     void Open(Form form)

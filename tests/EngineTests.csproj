@@ -15,5 +15,6 @@
       <Compile Include="..\app\Installer.cs" Link="Installer.cs" />
     <Compile Include="..\app\AudioKit.cs" Link="AudioKit.cs" />
     <Compile Include="..\app\PcReport.cs" Link="PcReport.cs" />
+    <Compile Include="..\app\Updater.cs" Link="Updater.cs" />
   </ItemGroup>
 </Project>
