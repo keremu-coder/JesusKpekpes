@@ -123,6 +123,18 @@ jobs:
             ''
             (Get-Content -LiteralPath USING.txt -Raw)
           ) | Set-Content -LiteralPath release-notes.txt -Encoding utf8
-          $ghArgs = @('release', 'create', $tag, 'JesusKpekpes-win-x64.zip', 'setup-out/JesusKpekpes-Setup.exe', 'SHA256SUMS.txt', '--title', $title, '--notes-file', 'release-notes.txt', '--target', $env:GITHUB_SHA)
-          if ($env:GITHUB_REF_TYPE -ne 'tag') { $ghArgs += '--prerelease' }
-          gh @ghArgs
+          $files = @('JesusKpekpes-win-x64.zip', 'setup-out/JesusKpekpes-Setup.exe', 'SHA256SUMS.txt')
+          # A release made by hand in the GitHub page already exists when this runs. Attach the files to it
+          # instead of failing, otherwise it stays empty and the in-app Update skips it.
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0 -and $env:GITHUB_REF_TYPE -eq 'tag') {
+            gh release upload $tag @files --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Could not attach the files to the existing release.' }
+            gh release edit $tag --title $title --notes-file release-notes.txt
+            if ($LASTEXITCODE -ne 0) { throw 'Could not update the release notes.' }
+          } else {
+            $ghArgs = @('release', 'create', $tag) + $files + @('--title', $title, '--notes-file', 'release-notes.txt', '--target', $env:GITHUB_SHA)
+            if ($env:GITHUB_REF_TYPE -ne 'tag') { $ghArgs += '--prerelease' }
+            gh @ghArgs
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the release.' }
+          }
