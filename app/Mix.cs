@@ -63,11 +63,11 @@ static class Mix
                 ? "Channel: L R C SL SR RL RR\r\n"
                 : "Channel: all\r\n");
             text.Append("VSTPlugin: Library \"").Append(plugin).Append('"');
+            var hit01 = Math.Clamp(plan.Hit, 0, 100) / 100f;
             if (nova)
-            {
-                var hit01 = Math.Clamp(plan.Hit, 0, 100) / 100f;
                 text.Append(" Nova 1 Hit ").Append(hit01.ToString("0.00", n));
-            }
+            else
+                text.Append(" Hit ").Append(hit01.ToString("0.00", n));
             // Boost step is off unless asked for. Off writes nothing, so the line is exactly what it was before.
             if (plan.Boost)
                 text.Append(" Boost 1 Power ").Append((Math.Clamp(plan.Power, 0, 100) / 100f).ToString("0.00", n));
@@ -149,7 +149,7 @@ static class Mix
                 right[i] = r;
             }
             if (nova) TuneEngine.ShapeNova([left, right], sr, plan.Hit);
-            else TuneEngine.CompressLinked([left, right], sr);
+            else TuneEngine.CompressLinked([left, right], sr, plan.Hit);
             var stereoCinema = Cinema(plan.Level);
             if (stereoCinema > 0f) TuneEngine.ApplyLoud([left, right], sr, stereoCinema);
             return;
@@ -191,7 +191,7 @@ static class Mix
         }
         var ears = new[] { left, right, sideLeft, sideRight, center, rearLeft, rearRight }.OfType<float[]>().ToArray();
         if (nova) TuneEngine.ShapeNova(ears, sr, plan.Hit);
-        else TuneEngine.CompressLinked(ears, sr);
+        else TuneEngine.CompressLinked(ears, sr, plan.Hit);
         var surroundCinema = Cinema(plan.Level);
         if (surroundCinema > 0f) TuneEngine.ApplyLoud(ears, sr, surroundCinema);
         if (nova)

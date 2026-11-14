@@ -2,7 +2,11 @@
    x86_64-w64-mingw32-gcc -shared -O2 -o JesusKpekpesTune.dll tune.c -lm
    The text file is the equalizer. Classic mode is the default. It raises the foot band, and the step tick
    (shoe grit at 3.4 kHz) only while it is a hit, so a steady sound in that band is not turned up.
-   Both are raised by the same amount in every ear, so the loudness difference between the ears is kept.
+   A footstep is mostly outside those two bands. While the foot band or the tick is a hit, one extra
+   gain is applied to the whole sample, the same in every ear, and scaled by the Hit slider.
+   Hit at 0 leaves that extra gain off. The extra gain uses its own 80 ms memory, so a running step
+   can fire again. The 400 ms tick memory is unchanged, so a steady tone still is not lifted.
+   Both lifts use the same amount in every ear, so the loudness difference between the ears is kept.
    The lift only ever adds level: it eases back to nothing as the foot band gets loud and is never below the input.
    While a gun is loud in any ear the tick lift steps aside, so a shot's crack is not made sharper.
    A gun is turned down in its own band, on the ear that fired. The other ear is never touched.
@@ -80,7 +84,7 @@ typedef struct {
     float foot_env, gun_env, shot_env, shot_slow, shot_peak;
     float foot_attack, foot_release, gun_attack, gun_release;
     float weight_fast, weight_slow, tick_fast, tick_slow;
-    float fast_a, fast_r, weight_r, slow_a, slow_r;
+    float fast_a, fast_r, weight_r, slow_a, slow_r, step_a;
 } Lane;
 
 /* Boost step. A small learned detector listens for footsteps and, only while one is playing, lifts the sound.
@@ -150,6 +154,9 @@ static void arm(Lane* lane, float rate) {
     lane->fast_r = 1.f - expf(-1.f / (rate * 0.040f));
     lane->slow_a = 1.f - expf(-1.f / (rate * 0.080f));
     lane->slow_r = 1.f - expf(-1.f / (rate * 0.400f));
+    /* Broadband step memory. 16 ms rise, 80 ms fall, so a running step can retrigger. */
+    lane->weight_r = 1.f - expf(-1.f / (rate * 0.080f));
+    lane->step_a = 1.f - expf(-1.f / (rate * 0.016f));
     lane->foot_attack = 1.f - expf(-1.f / (rate * 0.008f));
     lane->foot_release = 1.f - expf(-1.f / (rate * 0.100f));
     lane->gun_attack = 1.f - expf(-1.f / (rate * 0.003f));
@@ -197,10 +204,13 @@ static float lift(float env) {
     return db > 0.f ? powf(10.f, db / 20.f) : 1.f;
 }
 
-static float finish(Lane* lane, const Split* part, float foot_gain, float tick_gain) {
+static float finish(Lane* lane, const Split* part, float foot_gain, float tick_gain, float body_gain) {
     float gun_gain = powf(10.f, -reduction(lane->gun_env, -16.f, 2.f / 3.f) / 20.f);
     float y = part->other + part->foot_band * foot_gain + part->tick_band * tick_gain + part->gun_band * gun_gain;
-    float mag = fabsf(y);
+    float mag;
+    if (body_gain > 1.f) y *= body_gain;
+    if (!isfinite(y)) return 0.f;
+    mag = fabsf(y);
     if (mag <= 0.8912509f) return y;
     return copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
 }
@@ -257,6 +267,41 @@ static float classic_tick_gain(float fast, float ratio, float gun_cut_db) {
     if (guard > 1.f) guard = 1.f;
     db = transient_db(fast, ratio, 9.f) * guard;
     if (db <= 0.f) return 1.f;
+    return powf(10.f, db / 20.f);
+}
+
+/* Full-band step lift. The foot and tick bands stay as they are. This gain multiplies the
+   whole sample, only while one of those bands is a hit, and only as far as the Hit slider allows.
+   Full slider is +9 dB. A loud gun uses the same fade as the tick lift. */
+static void listen_step(Lane* lane, float foot_band, float tick_band) {
+    float level = fabsf(foot_band);
+    float tick_level = fabsf(tick_band);
+    if (tick_level > level) level = tick_level;
+    /* 16 ms rise, 80 ms fall. Rise is five times quicker than the fall, as on the tick detector,
+       so a steady tone settles and the ratio dies. The fall is short enough for the next step. */
+    follow(&lane->weight_fast, level, lane->fast_a, lane->fast_r);
+    follow(&lane->weight_slow, level, lane->step_a, lane->weight_r);
+}
+
+static float classic_body_gain(float fast, float ratio, float hit, float gun_cut_db) {
+    float guard, novelty, edge, level, quiet, db;
+    if (hit <= 0.001f) return 1.f;
+    guard = 1.f - gun_cut_db / 4.f;
+    if (guard <= 0.f) return 1.f;
+    if (guard > 1.f) guard = 1.f;
+    if (fast < 1e-6f || ratio < 1.8f) return 1.f;
+    novelty = 20.f * log10f(ratio);
+    if (novelty > 18.f) novelty = 18.f;
+    edge = novelty / 12.f;
+    if (edge > 1.f) edge = 1.f;
+    level = 20.f * log10f(fast + 1e-8f);
+    /* Full extra lift across the range of a real step, from a distant one up to a close one.
+       Nothing once that band is already up around -8 dB, so a shot or an explosion is not turned up. */
+    quiet = (-8.f - level) / 14.f;
+    if (quiet < 0.f) quiet = 0.f;
+    if (quiet > 1.f) quiet = 1.f;
+    db = 9.f * hit * quiet * edge * guard;
+    if (db <= 0.05f) return 1.f;
     return powf(10.f, db / 20.f);
 }
 
@@ -629,22 +674,34 @@ static void replace_core(Effect* effect, float** inputs, float** outputs, i32 fr
     if (!bank || frames < 1 || !inputs || !outputs) return;
     for (i = 0; i < frames; i++) {
         float strongest = 0.f, best_t_fast = 0.f, best_t_ratio = 1.f, gun_cut = 0.f;
-        float foot_gain, tick_gain;
+        float best_s_fast = 0.f, best_s_ratio = 1.f, hottest = 0.f;
+        float foot_gain, tick_gain, body_gain, loud_cut;
         for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
             Lane* lane = &bank->lane[ch];
-            float cut;
+            float cut, raw;
             if (!inputs[ch] || !outputs[ch]) continue;
             split(lane, inputs[ch][i], &part[ch]);
+            listen_step(lane, part[ch].foot_band, part[ch].tick_band);
+            raw = fabsf(inputs[ch][i]);
+            follow(&lane->shot_env, raw, lane->gun_attack, lane->gun_release);
+            if (lane->shot_env > hottest) hottest = lane->shot_env;
             if (lane->foot_env > strongest) strongest = lane->foot_env;
             consider(lane->tick_fast, lane->tick_slow, &best_t_fast, &best_t_ratio);
+            consider(lane->weight_fast, lane->weight_slow, &best_s_fast, &best_s_ratio);
             cut = reduction(lane->gun_env, -16.f, 2.f / 3.f);
             if (cut > gun_cut) gun_cut = cut;
         }
         foot_gain = lift(strongest);
         tick_gain = classic_tick_gain(best_t_fast, best_t_ratio, gun_cut);
+        body_gain = classic_body_gain(best_s_fast, best_s_ratio, bank->hit, gun_cut);
+        /* A real step sits well under this. A shot or explosion holds the envelope up, so the extra lift stays off. */
+        loud_cut = (hottest - 0.12f) / 0.23f;
+        if (loud_cut < 0.f) loud_cut = 0.f;
+        if (loud_cut > 1.f) loud_cut = 1.f;
+        body_gain = 1.f + (body_gain - 1.f) * (1.f - loud_cut);
         for (ch = 0; ch < effect->inputs && ch < 8; ch++) {
             if (!inputs[ch] || !outputs[ch]) continue;
-            outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain, tick_gain);
+            outputs[ch][i] = finish(&bank->lane[ch], &part[ch], foot_gain, tick_gain, body_gain);
         }
     }
 }
@@ -877,6 +934,130 @@ static int check_classic_tick(void) {
     return bad;
 }
 
+/* Broadband step. Hit 0 is the old band path. Hit 1 lifts the whole sample.
+   A second step 200 ms later must still be lifted. A steady tone and a loud gun must not. */
+static void put_step(float* dst, int at, int len, int sr, float amp) {
+    int i;
+    for (i = 0; i < len; i++) {
+        float env = sinf((float)i / (float)len * 3.14159265f);
+        float t = (float)(at + i) / (float)sr;
+        dst[at + i] = env * amp * (
+            sinf(2.f * 3.14159265f * 180.f * t) * 1.0f
+            + sinf(2.f * 3.14159265f * 700.f * t) * 0.75f
+            + sinf(2.f * 3.14159265f * 3400.f * t) * 0.35f);
+    }
+}
+
+static int check_classic_body(void) {
+    enum { sr = 48000, n = 48000 };
+    static float a[n], b[n], z[n], r[n];
+    static float hit0[n], hit1[n], mid[n];
+    float* in[8];
+    float* out[8];
+    int len = (int)(sr * 0.032f);
+    int at = (int)(sr * 0.10f);
+    int at2 = at + (int)(sr * 0.200f);
+    int i, bad = 0;
+    double e0, e1, e2, em, gun0, gun1, steady, gap_in, gap_out;
+    Effect* e;
+    memset(a, 0, sizeof a);
+    put_step(a, at, len, sr, 0.02f);
+    put_step(a, at2, len, sr, 0.02f);
+    memcpy(hit0, a, sizeof a);
+    memcpy(hit1, a, sizeof a);
+    memcpy(mid, a, sizeof a);
+    memset(b, 0, sizeof b);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 0.f);
+    in[0] = hit0; in[1] = b; out[0] = hit0; out[1] = b;
+    for (i = 2; i < 8; i++) in[i] = out[i] = 0;
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    memset(b, 0, sizeof b);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 1.f);
+    in[0] = hit1; in[1] = b; out[0] = hit1; out[1] = b;
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    memset(b, 0, sizeof b);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 0.5f);
+    in[0] = mid; in[1] = b; out[0] = mid; out[1] = b;
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e0 = energy(hit0, at, len);
+    e1 = energy(hit1, at, len);
+    e2 = energy(hit1, at2, len);
+    em = energy(mid, at, len);
+    printf("classic body first %.2fx second %.2fx mid %.2fx\n", e1 / e0, e2 / energy(hit0, at2, len), em / e0);
+    if (!(e1 > e0 * 1.8)) bad = 1;
+    if (!(e2 > energy(hit0, at2, len) * 1.8)) bad = 1;
+    if (!(em > e0 * 1.15 && em < e1 * 0.95)) bad = 1;
+
+    for (i = 0; i < n; i++) z[i] = sinf(2.f * 3.14159265f * 700.f * i / sr) * 0.03f;
+    memcpy(a, z, sizeof a);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 0.f);
+    in[0] = z; in[1] = b; out[0] = z; out[1] = b;
+    memset(b, 0, sizeof b);
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 1.f);
+    in[0] = a; in[1] = b; out[0] = a; out[1] = b;
+    memset(b, 0, sizeof b);
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    steady = energy(a, n - n / 5, n / 5) / energy(z, n - n / 5, n / 5);
+    printf("classic body steady %.3f\n", steady);
+    if (!(steady > 0.9 && steady < 1.1)) bad = 1;
+
+    for (i = 0; i < n; i++) z[i] = sinf(2.f * 3.14159265f * 1400.f * i / sr) * 0.9f;
+    memcpy(a, z, sizeof a);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 0.f);
+    in[0] = z; in[1] = b; out[0] = z; out[1] = b;
+    memset(b, 0, sizeof b);
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 1.f);
+    in[0] = a; in[1] = b; out[0] = a; out[1] = b;
+    memset(b, 0, sizeof b);
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    gun0 = energy(z, n / 2, n / 5);
+    gun1 = energy(a, n / 2, n / 5);
+    printf("classic body gun %.3f\n", gun1 / gun0);
+    if (!(gun1 / gun0 > 0.9 && gun1 / gun0 < 1.1)) bad = 1;
+
+    memset(a, 0, sizeof a);
+    memset(r, 0, sizeof r);
+    put_step(a, at, len, sr, 0.02f);
+    for (i = 0; i < len; i++) r[at + i] = a[at + i] * powf(10.f, -12.f / 20.f);
+    gap_in = 10.0 * log10(energy(a, at, len) / energy(r, at, len));
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 1.f);
+    in[0] = a; in[1] = r; out[0] = a; out[1] = r;
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    gap_out = 10.0 * log10(energy(a, at, len) / energy(r, at, len));
+    printf("classic body gap in %.2f out %.2f\n", gap_in, gap_out);
+    if (fabs(gap_out - gap_in) > 0.5) bad = 1;
+
+    memset(a, 0, sizeof a);
+    memset(b, 0, sizeof b);
+    put_step(a, at, len, sr, 0.02f);
+    e = VSTPluginMain(0);
+    e->set_param(e, 1, 1.f);
+    in[0] = a; in[1] = b; out[0] = a; out[1] = b;
+    replace(e, in, out, n);
+    dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+    if (energy(b, 0, n) > 1e-12) bad = 1;
+    for (i = 0; i < n; i++) if (!isfinite(a[i]) || !isfinite(b[i])) bad = 1;
+    return bad;
+}
+
 /* Nova is a separate mode. A steady 3.2 kHz tone must not be lifted. A short hit must be. */
 static int check_nova(void) {
     enum { sr = 48000, n = 48000 };
@@ -1002,10 +1183,8 @@ static int pipe_mode(void) {
     effect = VSTPluginMain(0);
     if (!effect) { free(block); return 2; }
     dispatch(effect, OP_RATE, 0, 0, 0, (float)rate);
-    if (mode == 1) {
-        effect->set_param(effect, 0, 1.f);
-        effect->set_param(effect, 1, hit);
-    }
+    effect->set_param(effect, 1, hit);
+    if (mode == 1) effect->set_param(effect, 0, 1.f);
     if (loud >= 0.001f) effect->set_param(effect, 4, loud);
     for (ch = 0; ch < channels; ch++) {
         inputs[ch] = block + (size_t)ch * (size_t)frames;
@@ -1270,6 +1449,7 @@ int main(int argc, char** argv) {
     if (!(quiet > 0.0008 && peak < 0.98f)) return 1;
     if (check_ears()) return 1;
     if (check_classic_tick()) return 1;
+    if (check_classic_body()) return 1;
     if (check_step()) return 1;
     if (check_loud()) return 1;
     return check_nova();

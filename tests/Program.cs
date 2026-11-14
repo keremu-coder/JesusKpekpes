@@ -228,9 +228,12 @@ for (var i = 0; i < (int)(sr * 0.08f); i++)
 }
 var after = gunAt + (int)(sr * 0.05f);
 Burst(gunL, after, 180, 0.03f);
+var gunDry = (float[])gunL.Clone();
 Suppress.Apply(gunL, gunR, sr);
 var kept = Band(gunL, 180, after, window) / tunedStep;
-Check(kept > 0.7f, $"a step after a shot was eaten, kept {kept}");
+var keptDry = Band(gunL, 180, after, window) / Band(gunDry, 180, after, window);
+Check(keptDry > 2f, $"a step after a loud low impact must stay louder than the unprocessed step, {keptDry}");
+Check(kept > 0.6f, $"a step after a loud low impact must not collapse against an isolated step, kept {kept}");
 
 var leftStep = new float[scene];
 var rightSilent = new float[scene];
@@ -350,6 +353,161 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     Check(dropText.Contains("Fc 500 Hz Gain -2.0 dB"), "Drop trims the boxy 500 Hz");
     Check(Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 0, 80, "x")).Contains("Fc 3400 Hz Gain 0.0 dB"), "the 3.4 kHz lift follows the hit slider");
     Check(Mix.Config(new MixPlan(Preset.Well, Route.Stereo, 100, 100, "x")).Contains("Fc 3400 Hz Gain 2.0 dB"), "Well raises the shoe grit a little less");
+}
+
+// ---- Broadband footstep lift. Hit scales it. A repeated step retriggers. A steady tone and a gun do not. ----
+{
+    const int rate = 48000;
+    float E(float[] x, int from, int count)
+    {
+        double t = 0;
+        for (var i = from; i < from + count; i++) t += (double)x[i] * x[i];
+        return (float)t;
+    }
+    void Put(float[] dst, int at, int len, float amp)
+    {
+        for (var i = 0; i < len; i++)
+        {
+            var env = MathF.Sin(i / (float)len * MathF.PI);
+            var t = (at + i) / (float)rate;
+            dst[at + i] = env * amp * (
+                MathF.Sin(2f * MathF.PI * 180f * t)
+                + MathF.Sin(2f * MathF.PI * 700f * t) * 0.75f
+                + MathF.Sin(2f * MathF.PI * 3400f * t) * 0.35f);
+        }
+    }
+    var len = (int)(rate * 0.032f);
+    var at = (int)(rate * 0.10f);
+    var at2 = at + (int)(rate * 0.200f);
+    float[] Run(int hit, float amp, int bursts)
+    {
+        var left = new float[rate];
+        Put(left, at, len, amp);
+        if (bursts > 1) Put(left, at2, len, amp);
+        TuneEngine.CompressLinked([left, new float[rate]], rate, hit);
+        return left;
+    }
+    var off = Run(0, 0.02f, 2);
+    var half = Run(50, 0.02f, 2);
+    var full = Run(100, 0.02f, 2);
+    var firstOff = E(off, at, len);
+    var firstHalf = E(half, at, len);
+    var firstFull = E(full, at, len);
+    var secondOff = E(off, at2, len);
+    var secondFull = E(full, at2, len);
+    Check(firstFull > firstOff * 1.8f, $"a broadband step must get louder at full hit, {firstFull / firstOff:0.00}x");
+    Check(firstHalf > firstOff * 1.15f && firstHalf < firstFull * 0.95f, $"half hit must sit between off and full, {firstHalf / firstOff:0.00}x");
+    Check(secondFull > secondOff * 1.8f, $"a step 200 ms later must still be lifted, {secondFull / secondOff:0.00}x");
+
+    var bodyQuiet = Run(100, 0.005f, 1);
+    var bodyQuietOff = new float[rate];
+    Put(bodyQuietOff, at, len, 0.005f);
+    var bodyQuietDry = (float[])bodyQuietOff.Clone();
+    TuneEngine.CompressLinked([bodyQuietOff, new float[rate]], rate, 0);
+    Check(E(bodyQuiet, at, len) > E(bodyQuietOff, at, len) * 1.5f, "a quieter step must still be lifted");
+    Check(E(bodyQuiet, at, len) > E(bodyQuietDry, at, len), "a quieter step must not be turned down");
+
+    var close = Run(100, 0.45f, 1);
+    var closePeak = close.Max(v => MathF.Abs(v));
+    Check(closePeak < 0.98f && close.All(float.IsFinite), $"a close step must stay under the ceiling, peak {closePeak}");
+
+    var bodySteady = new float[rate];
+    for (var i = 0; i < rate; i++) bodySteady[i] = MathF.Sin(2f * MathF.PI * 700f * i / rate) * 0.03f;
+    var bodySteadyOff = (float[])bodySteady.Clone();
+    TuneEngine.CompressLinked([bodySteady, new float[rate]], rate, 100);
+    TuneEngine.CompressLinked([bodySteadyOff, new float[rate]], rate, 0);
+    var bodySteadyGain = E(bodySteady, rate - rate / 5, rate / 5) / E(bodySteadyOff, rate - rate / 5, rate / 5);
+    Check(bodySteadyGain > 0.9f && bodySteadyGain < 1.1f, $"a steady tone must not get the extra lift, {bodySteadyGain}");
+
+    var gun = new float[rate];
+    for (var i = 0; i < rate; i++) gun[i] = MathF.Sin(2f * MathF.PI * 1400f * i / rate) * 0.9f;
+    var gunOff = (float[])gun.Clone();
+    TuneEngine.CompressLinked([gun, new float[rate]], rate, 100);
+    TuneEngine.CompressLinked([gunOff, new float[rate]], rate, 0);
+    var gunGain = E(gun, rate / 2, rate / 5) / E(gunOff, rate / 2, rate / 5);
+    Check(gunGain > 0.9f && gunGain < 1.1f, $"a loud gun must not get the extra lift, {gunGain}");
+
+    var under = new float[rate];
+    var gunEar = new float[rate];
+    Put(under, at, len, 0.02f);
+    for (var i = 0; i < rate; i++) gunEar[i] = MathF.Sin(2f * MathF.PI * 1400f * i / rate) * 0.9f;
+    var underDry = (float[])under.Clone();
+    TuneEngine.CompressLinked([underDry, (float[])gunEar.Clone()], rate, 0);
+    TuneEngine.CompressLinked([under, gunEar], rate, 100);
+    var overlap = E(under, at, len) / MathF.Max(1e-12f, E(underDry, at, len));
+    Check(overlap < (firstFull / firstOff) * 0.6f, $"a step under a gun must not get the full lift, {overlap:0.00} vs {firstFull / firstOff:0.00}");
+
+    var boom = new float[rate];
+    var seed = 17u;
+    for (var i = 0; i < len; i++)
+    {
+        seed = seed * 1664525u + 1013904223u;
+        var noise = ((seed >> 8) & 0xFFFFFF) / 16777216f * 2f - 1f;
+        boom[at + i] = noise * 0.7f * MathF.Sin(i / (float)len * MathF.PI);
+    }
+    var boomOff = (float[])boom.Clone();
+    TuneEngine.CompressLinked([boom, new float[rate]], rate, 100);
+    TuneEngine.CompressLinked([boomOff, new float[rate]], rate, 0);
+    var boomGain = E(boom, at, len) / MathF.Max(1e-12f, E(boomOff, at, len));
+    Check(boomGain < 1.8f, $"a loud explosion-like burst must not be lifted like a step, {boomGain:0.00}x");
+    Check(boom.All(float.IsFinite) && boom.Max(v => MathF.Abs(v)) < 0.98f, "an explosion-like burst must stay finite and under the ceiling");
+
+    var left = new float[rate];
+    var right = new float[rate];
+    Put(left, at, len, 0.02f);
+    for (var i = 0; i < len; i++) right[at + i] = left[at + i] * MathF.Pow(10f, -12f / 20f);
+    var gapIn = 10f * MathF.Log10(E(left, at, len) / E(right, at, len));
+    TuneEngine.CompressLinked([left, right], rate, 100);
+    var gapOut = 10f * MathF.Log10(E(left, at, len) / E(right, at, len));
+    Check(MathF.Abs(gapOut - gapIn) < 0.5f, $"the extra lift must keep the {gapIn:0.00} dB gap, got {gapOut:0.00}");
+
+    var bodyAlone = new float[rate];
+    var bodySilent = new float[rate];
+    Put(bodyAlone, at, len, 0.02f);
+    TuneEngine.CompressLinked([bodyAlone, bodySilent], rate, 100);
+    Check(E(bodySilent, 0, rate) < 1e-10f, "a step in the left ear must not appear in the right");
+
+    var many = new float[6][];
+    for (var k = 0; k < 6; k++) many[k] = new float[rate];
+    Put(many[0], at, len, 0.02f);
+    TuneEngine.CompressLinked(many, rate, 100);
+    Check(E(many[0], at, len) > firstOff, "six channels must still lift the step");
+    for (var k = 1; k < 6; k++)
+        Check(E(many[k], 0, rate) < 1e-10f, $"channel {k} was silent and must stay silent");
+
+    var poison = new float[64];
+    poison[8] = float.NaN;
+    poison[9] = float.PositiveInfinity;
+    TuneEngine.CompressLinked([poison], rate, 100);
+    Check(poison.All(float.IsFinite), "a bad sample must not spread NaN or infinity");
+
+    var otherRate = new float[44100];
+    var otherOff = new float[44100];
+    var otherLen = (int)(44100 * 0.032f);
+    var otherAt = (int)(44100 * 0.10f);
+    for (var i = 0; i < otherLen; i++)
+    {
+        var env = MathF.Sin(i / (float)otherLen * MathF.PI);
+        var t = (otherAt + i) / 44100f;
+        var s = env * 0.02f * (MathF.Sin(2f * MathF.PI * 180f * t) + MathF.Sin(2f * MathF.PI * 700f * t) * 0.75f);
+        otherRate[otherAt + i] = s;
+        otherOff[otherAt + i] = s;
+    }
+    TuneEngine.CompressLinked([otherRate, new float[44100]], 44100, 100);
+    TuneEngine.CompressLinked([otherOff, new float[44100]], 44100, 0);
+    Check(E(otherRate, otherAt, otherLen) > E(otherOff, otherAt, otherLen) * 1.4f, "the lift must follow a 44.1 kHz device");
+
+    var bed = new float[rate * 3];
+    var bedSeed = 99u;
+    for (var i = 0; i < bed.Length; i++)
+    {
+        bedSeed = bedSeed * 1664525u + 1013904223u;
+        bed[i] = (((bedSeed >> 8) & 0xFFFFFF) / 16777216f * 2f - 1f) * 0.01f;
+    }
+    var bedDry = (float[])bed.Clone();
+    TuneEngine.CompressLinked([bed], rate, 100);
+    var tail = E(bed, bed.Length - rate / 2, rate / 2) / E(bedDry, bed.Length - rate / 2, rate / 2);
+    Check(bed.All(float.IsFinite) && tail < 1.5f, $"three seconds of bed noise must not keep rising, tail {tail:0.00}x");
 }
 
 // ---- Nova Pro: extra profile. Drop and Well stay. A hit is lifted. A steady tone is not. ----
@@ -600,9 +758,12 @@ Check(Installer.CanInstall("ReaPlugs") && !Installer.CanInstall("HeSuVi"), "only
 {
     var plain = Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "x"), "C:\\p\\t.dll");
     var boosted = Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 100, 80, "x", Level.Safe, true, 75), "C:\\p\\t.dll");
+    Check(plain.Contains("VSTPlugin: Library \"C:\\p\\t.dll\" Hit 1.00"), "Drop writes Footstep hit into the plugin");
     Check(!plain.Contains("Boost"), "Boost step off must not change the config");
-    Check(boosted.Contains("VSTPlugin: Library \"C:\\p\\t.dll\" Boost 1 Power 0.75"), "Boost step on adds Boost and Power");
+    Check(boosted.Contains("Hit 1.00 Boost 1 Power 0.75"), "Boost step on adds Boost and Power after the hit setting");
     Check(boosted.Replace(" Boost 1 Power 0.75", "") == plain, "Boost step changes nothing else in the config");
+    Check(Mix.Config(new MixPlan(Preset.Drop, Route.Stereo, 0, 80, "x"), "C:\\p\\t.dll").Contains("Hit 0.00"), "Hit 0 is written, so the extra lift is off");
+    Check(Mix.Config(new MixPlan(Preset.Well, Route.Stereo, 80, 100, "x"), "C:\\p\\t.dll").Contains("Hit 0.80") && !Mix.Config(new MixPlan(Preset.Well, Route.Stereo, 80, 100, "x"), "C:\\p\\t.dll").Contains("Nova "), "Well gets the hit setting and stays out of Nova");
 }
 
 // ---- PC report: plain words, real line breaks ----
@@ -879,7 +1040,7 @@ static float TuneGap(string bin, int mode, float hit, int rate, float loud, floa
         Array.Copy(e, a, frames);
         return a;
     }).ToArray();
-    if (mode == 0) TuneEngine.CompressLinked(copy, rate);
+    if (mode == 0) TuneEngine.CompressLinked(copy, rate, (int)MathF.Round(hit * 100f));
     else TuneEngine.ShapeNova(copy, rate, (int)MathF.Round(hit * 100f));
     if (loud >= 0.001f) TuneEngine.ApplyLoud(copy, rate, loud);
     var worst = 0f;

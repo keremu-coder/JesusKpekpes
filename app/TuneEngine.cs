@@ -24,15 +24,18 @@ public static class TuneEngine
     /// The foot band gets one shared lift for all ears, taken from the strongest ear, so the loudness gap between the ears is kept.
     /// The lift only ever adds level (never below 1) and eases to 1 as the foot band gets loud. The gun trim stays on each ear alone.
     /// The step tick (shoe grit, 3.4 kHz) gets up to +9 dB, one gain for all ears, only while it is a hit, so a steady tone is not lifted.
-    /// While a gun is being trimmed in any ear, the tick lift fades out, so a shot's crack is not sharpened.
+    /// While a foot or tick hit is playing, one extra gain is applied to the whole sample. Hit 0 leaves that extra gain off.
+    /// Full hit is +9 dB. Its memory is 80 ms, so a running step can fire again. The 400 ms tick memory is unchanged.
+    /// While a gun is being trimmed in any ear, the tick lift and the extra gain fade out, so a shot is not made louder.
     /// Mirrors plugin/tune.c.
     /// </summary>
-    public static void CompressLinked(float[][] ears, int sampleRate)
+    public static void CompressLinked(float[][] ears, int sampleRate, int hit = 100)
     {
         var count = ears.Length;
         if (count == 0) return;
         var length = ears.Min(e => e.Length);
         var rate = Rate(sampleRate);
+        var amount = Math.Clamp(hit, 0, 100) / 100f;
         var footAttack = 1f - MathF.Exp(-1f / (rate * 0.008f));
         var footRelease = 1f - MathF.Exp(-1f / (rate * 0.100f));
         var gunAttack = 1f - MathF.Exp(-1f / (rate * 0.003f));
@@ -41,6 +44,8 @@ public static class TuneEngine
         var fastR = 1f - MathF.Exp(-1f / (rate * 0.040f));
         var slowA = 1f - MathF.Exp(-1f / (rate * 0.080f));
         var slowR = 1f - MathF.Exp(-1f / (rate * 0.400f));
+        var stepAtk = 1f - MathF.Exp(-1f / (rate * 0.016f));
+        var stepR = 1f - MathF.Exp(-1f / (rate * 0.080f));
         var gun = new Bandpass[count];
         var foot = new Bandpass[count];
         var tick = new Bandpass[count];
@@ -54,6 +59,9 @@ public static class TuneEngine
         var gunEnv = new float[count];
         var tickFast = new float[count];
         var tickSlow = new float[count];
+        var stepFast = new float[count];
+        var stepSlow = new float[count];
+        var rawEnv = new float[count];
         var gunBand = new float[count];
         var footBand = new float[count];
         var tickBand = new float[count];
@@ -64,7 +72,10 @@ public static class TuneEngine
             var strongest = 0f;
             var bestTickFast = 0f;
             var bestTickRatio = 1f;
+            var bestStepFast = 0f;
+            var bestStepRatio = 1f;
             var gunCut = 0f;
+            var hottest = 0f;
             for (var k = 0; k < count; k++)
             {
                 var x = ears[k][i];
@@ -80,18 +91,31 @@ public static class TuneEngine
                 if (gunEnv[k] < 1e-20f) gunEnv[k] = 0f;
                 Follow(ref tickFast[k], MathF.Abs(tickBand[k]), fastA, fastR);
                 Follow(ref tickSlow[k], MathF.Abs(tickBand[k]), slowA, slowR);
+                var stepLevel = MathF.Max(footLevel, MathF.Abs(tickBand[k]));
+                Follow(ref stepFast[k], stepLevel, fastA, fastR);
+                Follow(ref stepSlow[k], stepLevel, stepAtk, stepR);
+                Follow(ref rawEnv[k], MathF.Abs(x), gunAttack, gunRelease);
+                if (rawEnv[k] > hottest) hottest = rawEnv[k];
                 if (footEnv[k] > strongest) strongest = footEnv[k];
                 Consider(tickFast[k], tickSlow[k], ref bestTickFast, ref bestTickRatio);
+                Consider(stepFast[k], stepSlow[k], ref bestStepFast, ref bestStepRatio);
                 var cut = Reduction(gunEnv[k], -16f, 2f / 3f);
                 if (cut > gunCut) gunCut = cut;
             }
             var liftDb = 10f - Reduction(strongest, -20f, 1f);
             var footGain = liftDb > 0f ? MathF.Pow(10f, liftDb / 20f) : 1f;
             var tickGain = ClassicTickGain(bestTickFast, bestTickRatio, gunCut);
+            var body = ClassicBodyGain(bestStepFast, bestStepRatio, amount, gunCut);
+            var loudCut = (hottest - 0.12f) / 0.23f;
+            if (loudCut < 0f) loudCut = 0f;
+            if (loudCut > 1f) loudCut = 1f;
+            body = 1f + (body - 1f) * (1f - loudCut);
             for (var k = 0; k < count; k++)
             {
                 var gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
                 var y = other[k] + footBand[k] * footGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
+                if (body > 1f) y *= body;
+                if (!float.IsFinite(y)) y = 0f;
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
                 ears[k][i] = y;
@@ -363,6 +387,27 @@ public static class TuneEngine
         if (guard > 1f) guard = 1f;
         var db = TransientDb(fast, ratio, 9f) * guard;
         if (db <= 0f) return 1f;
+        return MathF.Pow(10f, db / 20f);
+    }
+
+    // Whole-sample step lift. Hit 0 is off. Full hit is +9 dB on a quiet step band, and nothing once that band is already loud.
+    static float ClassicBodyGain(float fast, float ratio, float hit, float gunCutDb)
+    {
+        if (hit <= 0.001f) return 1f;
+        var guard = 1f - gunCutDb / 4f;
+        if (guard <= 0f) return 1f;
+        if (guard > 1f) guard = 1f;
+        if (fast < 1e-6f || ratio < 1.8f) return 1f;
+        var novelty = 20f * MathF.Log10(ratio);
+        if (novelty > 18f) novelty = 18f;
+        var edge = novelty / 12f;
+        if (edge > 1f) edge = 1f;
+        var level = 20f * MathF.Log10(fast + 1e-8f);
+        var quiet = (-8f - level) / 14f;
+        if (quiet < 0f) quiet = 0f;
+        if (quiet > 1f) quiet = 1f;
+        var db = 9f * hit * quiet * edge * guard;
+        if (db <= 0.05f) return 1f;
         return MathF.Pow(10f, db / 20f);
     }
 
