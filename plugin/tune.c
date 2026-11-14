@@ -99,7 +99,7 @@ typedef struct {
    does not pull the gain down. The sound itself is not delayed and is not high-passed. */
 typedef struct {
     float z[8];
-    float hp, det, det_up, det_down, gain_db, g_up, g_down, lim, lim_r, target, amount;
+    float hp, det, det_up, det_down, fast, fast_k, gain_db, g_up, g_rec, g_down, lim, lim_r, target, amount;
     int hold, hold_len;
 } Loud;
 
@@ -459,6 +459,8 @@ static void loud_arm(Loud* ld, float rate, float amount) {
     ld->det_up = 1.f - expf(-1.f / (rate * 0.180f));
     ld->det_down = 1.f - expf(-1.f / (rate * 0.400f));
     ld->g_up = 1.f - expf(-1.f / (rate * 0.550f));
+    ld->g_rec = 1.f - expf(-1.f / (rate * 0.060f));
+    ld->fast_k = 1.f - expf(-1.f / (rate * 0.008f));
     ld->g_down = 1.f - expf(-1.f / (rate * 0.040f));
     ld->lim_r = 1.f - expf(-1.f / (rate * 0.080f));
     ld->lim = 1.f;
@@ -508,7 +510,17 @@ static void loud_run(Loud* ld, float** out, i32 nch, i32 frames) {
             if (slow < 1e-20f) slow = 0.f;
             ld->det = slow;
         }
+        /* When a loud stretch ends, the slow detector remembers it for a second and keeps the gain down, so a step
+           right after is quieter than it was. A fast detector notices the drop. The level used is never more than
+           6 dB above what is playing now, and a cut comes back to zero in about 60 ms. A lift above zero is
+           still slow, so quiet background does not jump up. Steady sound is not affected. */
+        ld->fast += (p - ld->fast) * ld->fast_k;
+        if (ld->fast < 1e-20f) ld->fast = 0.f;
         level = 10.f * log10f(slow + 1e-20f);
+        {
+            float now = 10.f * log10f(ld->fast + 1e-20f) + 6.f;
+            if (now < level) level = now;
+        }
         want = (ld->target - level) * 0.72f;
         if (want < -10.f) want = -10.f;
         if (want > 12.f) want = 12.f;
@@ -521,7 +533,7 @@ static void loud_run(Loud* ld, float** out, i32 nch, i32 frames) {
             want = ld->gain_db < 0.f ? ld->gain_db : 0.f;
             ld->hold--;
         }
-        ld->gain_db += (want - ld->gain_db) * (want > ld->gain_db ? ld->g_up : ld->g_down);
+        ld->gain_db += (want - ld->gain_db) * (want > ld->gain_db ? (ld->gain_db < 0.f ? ld->g_rec : ld->g_up) : ld->g_down);
         g = powf(10.f, ld->gain_db / 20.f);
         pk = 0.f;
         for (ch = 0; ch < nch; ch++) {
@@ -1182,6 +1194,38 @@ static int check_loud(void) {
     for (i = 0; i < n; i++) if (fabsf(bed[i]) > peak) peak = fabsf(bed[i]);
     bed_up = rms_db(bed, sr, (int)(sr * 1.2f)) - rms_db(qdry, sr, (int)(sr * 1.2f));
     shot_up = rms_db(bed, shot_at, shot_at + shot_len) - rms_db(qdry, shot_at, shot_at + shot_len);
+    /* 150 ms after a loud stretch the stage must have let go. Held down, a footstep there is quieter than it should be. */
+    {
+        static float fight_on[n], fight_off[n];
+        unsigned seed = 12345u;
+        int f_end = (int)(sr * 0.8f), s_at, s_len = (int)(sr * 0.12f);
+        double lvl_on, lvl_off;
+        for (i = 0; i < n; i++) {
+            float r, env;
+            seed = seed * 1664525u + 1013904223u;
+            r = ((float)(seed >> 8) / 8388608.f) - 1.f;
+            env = i < f_end ? powf(10.f, -12.f / 20.f) * 1.7f : powf(10.f, -45.f / 20.f) * 1.7f;
+            fight_on[i] = fight_off[i] = r * env;
+        }
+        s_at = f_end + (int)(sr * 0.15f);
+        for (i = 0; i < s_len; i++) {
+            float w = sinf(3.14159265f * i / s_len);
+            float st = (sinf(2.f * 3.14159265f * 3400.f * i / sr) + sinf(2.f * 3.14159265f * 180.f * i / sr)) * 0.5f * powf(10.f, -29.f / 20.f) * w;
+            fight_on[s_at + i] += st;
+            fight_off[s_at + i] += st;
+        }
+        e = VSTPluginMain(0);
+        e->set_param(e, 4, 0.67f);
+        memset(in, 0, sizeof in);
+        memset(outp, 0, sizeof outp);
+        in[0] = outp[0] = fight_on;
+        replace(e, in, outp, n);
+        dispatch(e, OP_CLOSE, 0, 0, 0, 0.f);
+        lvl_on = rms_db(fight_on, s_at, s_at + s_len);
+        lvl_off = rms_db(fight_off, s_at, s_at + s_len);
+        printf("loud: 150 ms after a loud stretch the stage gives %+.1f dB\n", lvl_on - lvl_off);
+        if (!(lvl_on - lvl_off > 4.0)) bad = 1;
+    }
     printf("loud: quiet %+.1f dB, hot %+.1f dB, hiss %+.2f dB, gap %.2f, bed %+.1f dB, shot %+.2f dB, peak %.3f\n",
         quiet_up, hot_down, hiss_up, gap_out - gap_in, bed_up, shot_up, peak);
     if (!(quiet_up > 8.0)) bad = 1;

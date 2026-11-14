@@ -896,4 +896,112 @@ static float TuneGap(string bin, int mode, float hit, int rate, float loud, floa
     return worst;
 }
 
+// ---- updater: which release, which files, and a swap that can always be undone ----
+{
+    const string host = "https://github.com/keremu-coder/JesusKpekpes/releases/download/";
+    static string Rel(string tag, bool draft = false, bool pre = false, bool assets = true, string from = host)
+    {
+        var list = assets
+            ? "{\"name\":\"" + Updater.ZipName + "\",\"browser_download_url\":\"" + from + tag + "/" + Updater.ZipName + "\"},"
+              + "{\"name\":\"" + Updater.SumsName + "\",\"browser_download_url\":\"" + from + tag + "/" + Updater.SumsName + "\"}"
+            : "";
+        return "{\"tag_name\":\"" + tag + "\",\"draft\":" + (draft ? "true" : "false") + ",\"prerelease\":" + (pre ? "true" : "false") + ",\"assets\":[" + list + "]}";
+    }
+    static string All(params string[] releases) => "[" + string.Join(",", releases) + "]";
+    var now = new Version(1, 0, 9);
+
+    Check(Updater.ParseVersion("v1.0.10") == new Version(1, 0, 10), "v1.0.10 should be version 1.0.10");
+    Check(Updater.ParseVersion("1.0.9") == new Version(1, 0, 9), "1.0.9 should be a version");
+    Check(Updater.ParseVersion("v1.0") is null && Updater.ParseVersion("build-ae5aec7") is null
+        && Updater.ParseVersion("v1.0.9-beta") is null && Updater.ParseVersion("") is null && Updater.ParseVersion(null) is null,
+        "only plain x.y.z is a release version");
+    Check(Updater.Normalize(new Version(1, 0, 9, 0)) == new Version(1, 0, 9) && Updater.Current() >= new Version(0, 0, 0), "a version with a fourth number should equal the plain one");
+    Check(!Updater.CanUpdate(new Version(0, 0, 0)) && Updater.CanUpdate(new Version(1, 0, 0)), "a hand-made 0.0.0 build must not update itself");
+
+    var pick = Updater.Pick(All(Rel("v1.0.10"), Rel("v1.0.9")), now);
+    Check(pick is not null && pick.Version == new Version(1, 0, 10) && pick.ZipUrl.EndsWith("/v1.0.10/" + Updater.ZipName), "the newer release should be picked");
+    Check(Updater.Pick(All(Rel("v1.0.9"), Rel("v1.0.10")), new Version(1, 0, 8))?.Version == new Version(1, 0, 10), "1.0.10 is newer than 1.0.9, not older");
+    Check(Updater.Pick(All(Rel("v1.0.11", assets: false), Rel("v1.0.10")), now)?.Version == new Version(1, 0, 10), "a release without files (a failed build) should be passed over");
+    Check(Updater.Pick(All(Rel("v1.0.12", draft: true), Rel("v1.0.11", pre: true), Rel("build-abc123"), Rel("v1.0.9")), now) is null, "drafts, pre-releases and builds are not updates");
+    Check(Updater.Pick(All(Rel("v1.0.9")), now) is null && Updater.Pick(All(Rel("v1.0.8")), now) is null, "the same or an older release is not an update");
+    Check(Updater.Pick(All(Rel("v1.0.10", from: "https://example.com/")), now) is null, "files from another site must be refused");
+    Check(Updater.Pick("not json", now) is null && Updater.Pick("{}", now) is null && Updater.Pick("[]", now) is null, "bad answers mean no update");
+
+    var line = new string('a', 64);
+    var sums = line + "  " + Updater.ZipName + "\r\n" + new string('b', 64) + " *other.zip\r\n";
+    Check(Updater.HashFor(sums, Updater.ZipName) == line.ToUpperInvariant() && Updater.HashFor(sums, "other.zip") == new string('B', 64), "the checksum should be read for each file");
+    Check(Updater.HashFor("short  " + Updater.ZipName, Updater.ZipName) is null && Updater.HashFor(sums, "missing.zip") is null, "a bad or missing checksum must give null");
+
+    var root = Path.Combine(Path.GetTempPath(), "kpk-up-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(root);
+    static bool Throws(Action act)
+    {
+        try { act(); return false; }
+        catch (InvalidDataException) { return true; }
+    }
+    Check(Throws(() => Updater.SafeDest(root, "../evil.txt")) && Throws(() => Updater.SafeDest(root, "..\\evil.txt"))
+        && Throws(() => Updater.SafeDest(root, "a/../../evil.txt")) && !Throws(() => Updater.SafeDest(root, "pc/Kpekpes.ps1")) && !Throws(() => Updater.SafeDest(root, "pc\\lib\\Core.ps1")),
+        "an entry must never land outside the folder");
+
+    var good = Path.Combine(root, "good.zip");
+    using (var z = System.IO.Compression.ZipFile.Open(good, System.IO.Compression.ZipArchiveMode.Create))
+    {
+        using (var w = new StreamWriter(z.CreateEntry("JesusKpekpes.exe").Open())) w.Write("new exe");
+        using (var w = new StreamWriter(z.CreateEntry("pc/Kpekpes.ps1").Open())) w.Write("new script");
+    }
+    var unpacked = Path.Combine(root, "unpacked");
+    Updater.Unpack(good, unpacked);
+    Check(File.ReadAllText(Path.Combine(unpacked, "JesusKpekpes.exe")) == "new exe" && File.ReadAllText(Path.Combine(unpacked, "pc", "Kpekpes.ps1")) == "new script", "the zip should unpack with its folders");
+    var evil = Path.Combine(root, "evil.zip");
+    using (var z = System.IO.Compression.ZipFile.Open(evil, System.IO.Compression.ZipArchiveMode.Create))
+    {
+        using (var w = new StreamWriter(z.CreateEntry("fine.txt").Open())) w.Write("x");
+        using (var w = new StreamWriter(z.CreateEntry("../outside.txt").Open())) w.Write("x");
+    }
+    var evilTo = Path.Combine(root, "evil-out");
+    Check(Throws(() => Updater.Unpack(evil, evilTo)) && !File.Exists(Path.Combine(root, "outside.txt")) && !Directory.Exists(evilTo), "a zip with an unsafe path must be refused before anything is written");
+
+    static void Put(string folder, string name, string text)
+    {
+        var path = Path.Combine(folder, name.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text);
+    }
+    static string Get(string folder, string name) => File.ReadAllText(Path.Combine(folder, name.Replace('/', Path.DirectorySeparatorChar)));
+    static string Snapshot(string folder) => string.Join("|", Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
+        .OrderBy(f => f, StringComparer.Ordinal).Select(f => Path.GetRelativePath(folder, f) + "=" + File.ReadAllText(f)));
+
+    var app = Path.Combine(root, "app");
+    var stage = Path.Combine(root, "stage");
+    Put(app, "JesusKpekpes.exe", "old exe");
+    Put(app, "same.dll", "same");
+    Put(app, "sub/b.txt", "old b");
+    Put(app, "keep.txt", "the person's own file");
+    Put(stage, "JesusKpekpes.exe", "new exe");
+    Put(stage, "same.dll", "same");
+    Put(stage, "sub/b.txt", "new b");
+    Put(stage, "sub/deeper/c.txt", "new c");
+
+    var before = Snapshot(app);
+    var broken = Updater.Apply(stage, app, rel => rel.EndsWith("c.txt", StringComparison.Ordinal));
+    Check(broken.Length > 0 && Snapshot(app) == before, "a failed update must leave the program folder exactly as it was");
+    var brokenFirst = Updater.Apply(stage, app, rel => rel == "JesusKpekpes.exe");
+    Check(brokenFirst.Length > 0 && Snapshot(app) == before, "a failure on the first file must also leave it as it was");
+
+    var worked = Updater.Apply(stage, app);
+    Check(worked.Length == 0, "the update should apply: " + worked);
+    Check(Get(app, "JesusKpekpes.exe") == "new exe" && Get(app, "sub/b.txt") == "new b" && Get(app, "sub/deeper/c.txt") == "new c", "the new files should be in place");
+    Check(Get(app, "same.dll") == "same" && Get(app, "keep.txt") == "the person's own file", "files that are the same or not in the update stay as they are");
+    Check(Get(app, "JesusKpekpes.exe" + Updater.OldSuffix) == "old exe" && Get(app, "sub/b.txt" + Updater.OldSuffix) == "old b" && !File.Exists(Path.Combine(app, "same.dll" + Updater.OldSuffix)),
+        "each replaced file should be kept as .kpekpes-old until the swap is finished");
+
+    Directory.CreateDirectory(Path.Combine(app, Updater.WorkFolder, "new"));
+    Updater.Tidy(app);
+    Check(!Directory.EnumerateFiles(app, "*" + Updater.OldSuffix, SearchOption.AllDirectories).Any() && !Directory.Exists(Path.Combine(app, Updater.WorkFolder)) && Get(app, "JesusKpekpes.exe") == "new exe",
+        "tidying removes the kept old files and the work folder and nothing else");
+
+    Check(Updater.Describe("ok|1.0.10").StartsWith("Updated to version 1.0.10.", StringComparison.Ordinal) && Updater.Describe("failed|disk full.").Contains("still on the old version"), "the result sentences should be plain");
+    try { Directory.Delete(root, true); } catch (IOException) { }
+}
+
 Console.WriteLine("engine ok");
