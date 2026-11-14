@@ -1,5 +1,9 @@
 # Unreleased
 
+- **The program updates itself.** The first window shows an Update button when a newer release exists. It checks the
+  SHA-256, starts the new copy once, swaps the files and undoes everything if a step fails.
+- **Every Xbox app and service is removed or switched off**, not only Game Bar. Controller drivers are not touched.
+- Audio: a footstep right after a loud stretch is no longer held down by the loudness stage.
 - **Game Bar is removed** with the other Xbox apps (`Microsoft.XboxGamingOverlay`). On dual-CCD X3D chips it is still kept.
 - **The "Get an app to open this ms-gamebar link" window is silenced** for both `ms-gamebar` and `ms-gamingoverlay`,
   in the same run that removes Game Bar and again every time the app starts. Verify reports both links.
