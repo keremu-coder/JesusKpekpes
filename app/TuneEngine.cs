@@ -250,6 +250,8 @@ public static class TuneEngine
         var detUp = 1f - MathF.Exp(-1f / (rate * 0.180f));
         var detDown = 1f - MathF.Exp(-1f / (rate * 0.400f));
         var gUp = 1f - MathF.Exp(-1f / (rate * 0.550f));
+        var gRec = 1f - MathF.Exp(-1f / (rate * 0.060f));
+        var fastK = 1f - MathF.Exp(-1f / (rate * 0.008f));
         var gDown = 1f - MathF.Exp(-1f / (rate * 0.040f));
         var limR = 1f - MathF.Exp(-1f / (rate * 0.080f));
         var holdLen = (int)(rate * 0.045f);
@@ -257,6 +259,7 @@ public static class TuneEngine
         var target = -24f + 6f * amount;
         var z = new float[count];
         var det = 0f;
+        var fast = 0f;
         var gainDb = 0f;
         var lim = 1f;
         var hold = 0;
@@ -290,7 +293,12 @@ public static class TuneEngine
                 if (slow < 1e-20f) slow = 0f;
                 det = slow;
             }
+            // After a loud stretch the slow detector would hold the gain down; the fast one lets it go (same as the plug-in).
+            fast += (p - fast) * fastK;
+            if (fast < 1e-20f) fast = 0f;
             var level = 10f * MathF.Log10(slow + 1e-20f);
+            var now = 10f * MathF.Log10(fast + 1e-20f) + 6f;
+            if (now < level) level = now;
             var want = (target - level) * 0.72f;
             if (want < -10f) want = -10f;
             if (want > 12f) want = 12f;
@@ -304,7 +312,7 @@ public static class TuneEngine
                 want = gainDb < 0f ? gainDb : 0f;
                 hold--;
             }
-            gainDb += (want - gainDb) * (want > gainDb ? gUp : gDown);
+            gainDb += (want - gainDb) * (want > gainDb ? (gainDb < 0f ? gRec : gUp) : gDown);
             var g = MathF.Pow(10f, gainDb / 20f);
             var pk = 0f;
             for (var ch = 0; ch < count; ch++)
