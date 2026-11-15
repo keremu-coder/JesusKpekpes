@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using JesusKpekpes;
 
@@ -1164,5 +1165,10 @@ static float TuneGap(string bin, int mode, float hit, int rate, float loud, floa
     Check(Updater.Describe("ok|1.0.10").StartsWith("Updated to version 1.0.10.", StringComparison.Ordinal) && Updater.Describe("failed|disk full.").Contains("still on the old version"), "the result sentences should be plain");
     try { Directory.Delete(root, true); } catch (IOException) { }
 }
+
+var blocked = new Win32Exception(4551, "An Application Control policy has blocked this file.");
+Check(LaunchNote.Blocked(blocked) && LaunchNote.AfterInstall(blocked).StartsWith("Installed.", StringComparison.Ordinal) && !LaunchNote.AfterInstall(blocked).Contains("Install stopped", StringComparison.Ordinal),
+    "a policy block means the copy is in place and Windows refused to start it");
+Check(LaunchNote.AfterInstall(new InvalidOperationException("disk full")).Contains("did not open", StringComparison.Ordinal), "a different launch error stays a different sentence");
 
 Console.WriteLine("engine ok");
