@@ -74,8 +74,15 @@ sealed class SetupForm : Form
             open.FlatAppearance.MouseDownBackColor = Color.FromArgb(18, 34, 52);
             open.Click += (_, _) =>
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(found.Exe) { UseShellExecute = true });
-                Close();
+                try
+                {
+                    Open(found.Exe);
+                    Close();
+                }
+                catch (Exception ex)
+                {
+                    _status.Text = LaunchNote.AfterInstall(ex);
+                }
             };
             Controls.Add(open);
         }
@@ -102,6 +109,7 @@ sealed class SetupForm : Form
     {
         button.Enabled = false;
         var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Jesus Kpekpes");
+        var exe = Path.Combine(dir, "JesusKpekpes.exe");
         try
         {
             using var zip = OpenPayload();
@@ -126,20 +134,44 @@ sealed class SetupForm : Form
                 if (!dest.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException(entry.FullName);
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 entry.ExtractToFile(dest, true);
+                Unblock(dest);
             }
-            var exe = Path.Combine(dir, "JesusKpekpes.exe");
             if (!File.Exists(exe)) throw new FileNotFoundException("JesusKpekpes.exe was not in the installer.");
             WriteShortcut(exe, dir);
             WriteUninstall(exe, dir);
-            _status.Text = "Installed. Opening it now. This window will close.";
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true });
-            Close();
         }
         catch (Exception ex)
         {
             _status.Text = "Install stopped: " + ex.Message;
             button.Enabled = true;
+            return;
         }
+        try
+        {
+            Open(exe);
+            _status.Text = "Installed. Opening it now. This window will close.";
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _status.Text = LaunchNote.AfterInstall(ex);
+            button.Enabled = true;
+        }
+    }
+
+    static void Open(string exe)
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe)
+        {
+            UseShellExecute = true,
+            WorkingDirectory = Path.GetDirectoryName(exe) ?? Environment.SystemDirectory,
+        });
+    }
+
+    static void Unblock(string path)
+    {
+        try { File.Delete(path + ":Zone.Identifier"); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or FileNotFoundException) { }
     }
 
     static ZipArchive? OpenPayload()
