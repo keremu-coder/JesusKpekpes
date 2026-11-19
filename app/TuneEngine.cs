@@ -123,9 +123,10 @@ public static class TuneEngine
         }
     }
 
-    /// Nova Pro only. The weight band holds like a drum hit and the tick stays short. Both are lifted
-    /// only while they are a hit, by one gain for every ear. A steady tone is not lifted.
-    /// A gun is trimmed only on a front ear, and not at all while a step is the hit, so the step is not silenced.
+    /// Nova Pro only. A footstep is lifted as a whole sound, up to +10 dB on everything
+    /// that is not the gun band, and never below the input. The lift still happens while a shot
+    /// is playing. A gun is trimmed only in its own band, by no more than 6 dB, so the shot stays loud.
+    /// The rest of the sample is never turned down.
     public static void ShapeNova(float[][] ears, int sampleRate, int hit)
     {
         var count = ears.Length;
@@ -144,8 +145,6 @@ public static class TuneEngine
         var gunRelease = 1f - MathF.Exp(-1f / (rate * 0.122f));
         var peakA = 1f - MathF.Exp(-1f / (rate * 0.0004f));
         var peakR = 1f - MathF.Exp(-1f / (rate * 0.040f));
-        var duckDown = 1f - MathF.Exp(-1f / (rate * 0.0015f));
-        var duckUp = 1f - MathF.Exp(-1f / (rate * 0.012f));
         var weight = new Bandpass[count];
         var tick = new Bandpass[count];
         var gun = new Bandpass[count];
@@ -213,24 +212,35 @@ public static class TuneEngine
                 if (tickFast[ear] > tmax) tmax = tickFast[ear];
             }
             var gunish = gmax > fmax * 1.35f && gmax > tmax * 1.35f && gmax > 0.0015f;
-            if (gunish && crack >= 1.8f)
+            var stepHit = (fmax > 0.004f && bestWeightRatio >= 1.7f) || (tmax > 0.004f && bestTickRatio >= 1.7f);
+            var cinema = 1f;
+            if (gunish && crack >= 1.8f && !stepHit)
             {
                 weightGain = 1f;
                 tickGain = 1f;
                 step = 1f;
             }
+            if (stepHit && amount > 0.001f)
+            {
+                var db = 10f * amount;
+                var edge = (step - 1f) / 1.5f;
+                if (edge < 0f) edge = 0f;
+                if (edge > 1f) edge = 1f;
+                cinema = MathF.Pow(10f, db * edge / 20f);
+            }
             var who = WhoFired(count > 0 ? shotPeak[0] : 0f, count > 1 ? shotPeak[1] : 0f, count > 2 ? shotPeak[2] : 0f, count, crack, gunish, ref hold);
-            var target = who == 1 ? 0.10f : 1f;
-            own += (target - own) * (target < own ? duckDown : duckUp);
-            var body = own;
+            _ = who;
+            own = 1f;
             for (var k = 0; k < count; k++)
             {
                 var gunGain = 1f;
-                if (who == 1) gunGain = body;
-                else if (who == 2) gunGain = 2f;
-                else if ((count <= 2 || k < 3) && !(step >= 1.15f && !gunish))
-                    gunGain = MathF.Pow(10f, -Reduction(gunEnv[k], -16f, 2f / 3f) / 20f);
-                var y = (other[k] + weightBand[k] * weightGain + tickBand[k] * tickGain) * body + gunBand[k] * gunGain;
+                if (gunish && !stepHit && (count <= 2 || k < 3))
+                {
+                    var cut = Reduction(gunEnv[k], -16f, 2f / 3f);
+                    if (cut > 6f) cut = 6f;
+                    gunGain = MathF.Pow(10f, -cut / 20f);
+                }
+                var y = other[k] * cinema + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
                 ears[k][i] = y;
@@ -253,8 +263,7 @@ public static class TuneEngine
         var bal = (left < right ? left : right) / (side + 1e-8f);
         if (hi > 0.08f && bal > 0.55f) hold = 1;
         if (hold == 1 && bal > 0.55f) return 1;
-        if (hi > 0.004f && hi <= 0.08f) return 2;
-        if (hi > 0.02f && bal < 0.45f) return 2;
+        if (hi > 0.05f && bal < 0.45f) return 2;
         return 0;
     }
 
