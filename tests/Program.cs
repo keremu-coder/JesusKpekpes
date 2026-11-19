@@ -579,9 +579,8 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     TuneEngine.ShapeNova([enemyL, enemyR], rate, 100);
     var ownOut = Energy(ownL, rate / 5, (int)(rate * 0.08f));
     var enemyOut = Energy(enemyL, rate / 5, (int)(rate * 0.08f));
-    Check(ownOut < ownDryE * 0.08f, $"your own shot should be pushed down, kept {ownOut / ownDryE}");
-    Check(enemyOut > enemyDryE * 0.9f, $"an enemy shot must not be pushed down, kept {enemyOut / enemyDryE}");
-    Check(enemyOut > ownOut, $"an enemy shot should come out above yours, enemy {enemyOut} own {ownOut}");
+    Check(ownOut > ownDryE * 0.50f && ownOut < ownDryE * 1.80f, $"your own shot should stay loud, kept {ownOut / ownDryE}");
+    Check(enemyOut > enemyDryE * 0.70f && enemyOut < enemyDryE * 5.0f, $"an enemy shot should stay audible and not take over, kept {enemyOut / enemyDryE}");
 
     var footAt = rate / 5;
     var footLen = (int)(rate * 0.04f);
@@ -597,7 +596,7 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     var footDry = Energy(footL, footAt, (int)(rate * 0.08f));
     TuneEngine.ShapeNova([footL, footR], rate, 100);
     var footOut = Energy(footL, footAt, (int)(rate * 0.08f));
-    Check(footOut > footDry * 0.9f, $"a centred footstep must not be pushed down, kept {footOut / footDry}");
+    Check(footOut > footDry * 3f, $"a centred footstep should come up like a cinema step, kept {footOut / footDry}");
 
     var sideL = Gun(0.40f);
     var sideR = new float[rate];
