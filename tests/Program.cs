@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using JesusKpekpes.setup;
+using JesusKpekpes.Setup;
 
 const int sr = 48_000;
 
