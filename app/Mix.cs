@@ -48,7 +48,8 @@ static class Mix
         {
             Write(text, n, "C", filters.Where(f => f.Channels == "C"));
             Write(text, n, "L R", filters.Where(f => f.Channels == "L R"));
-            Write(text, n, "SL SR RL RR", filters.Where(f => f.Channels == "SL SR RL RR"));
+            Write(text, n, "SL SR", filters.Where(f => f.Channels == "SL SR"));
+            Write(text, n, "RL RR", filters.Where(f => f.Channels == "RL RR"));
             text.Append("Channel: LFE\r\n");
             text.Append("Preamp: ").Append(Lfe(plan).ToString("0.0", n)).Append(" dB\r\n");
         }
@@ -156,14 +157,15 @@ static class Mix
         }
 
         var front = filters.Where(f => f.Channels == "L R").ToArray();
-        var side = filters.Where(f => f.Channels == "SL SR RL RR").ToArray();
+        var side = filters.Where(f => f.Channels == "SL SR").ToArray();
+        var rear = filters.Where(f => f.Channels == "RL RR").ToArray();
         var centerBands = filters.Where(f => f.Channels == "C").ToArray();
         var frontL = Chain(front, sr);
         var frontR = Chain(front, sr);
         var sideL = Chain(side, sr);
         var sideR = Chain(side, sr);
-        var rearL = Chain(side, sr);
-        var rearR = Chain(side, sr);
+        var rearL = Chain(rear, sr);
+        var rearR = Chain(rear, sr);
         var centerChain = Chain(centerBands, sr);
         for (var i = 0; i < left.Length; i++)
         {
@@ -300,15 +302,19 @@ static class Mix
         var quiet = Math.Clamp(plan.Quiet, 0, 100) / 100f;
         if (plan.Preset == Preset.Nova)
         {
-            // Wired Nova Pro, small USB adapter treated as flat (Sonar and the GameDAC EQ off).
-            // Measured on this headset: a bass bump near 140 Hz, a dip around 3-4 kHz, a peak at 8 kHz.
-            // The tick is put on the dip, not on the peak. The 8 kHz cut does not follow the hit slider.
+            // Wired Nova Pro. The footstep curve follows a measured Modern Warfare step:
+            // mud under the step comes down, the body, scrape and side-presence come up,
+            // and the 3 kHz crack is left almost flat so a shot does not wear the step.
+            // The 8 kHz cut does not follow the hit slider.
             var bands = new List<Band>();
-            bands.AddRange(NovaBands("L R", hit, quiet));
+            bands.AddRange(NovaBands("L R", hit, quiet, 1f));
             if (plan.Route == Route.Surround)
             {
-                bands.AddRange(NovaBands("C", hit, quiet));
-                bands.AddRange(NovaBands("SL SR RL RR", hit, quiet));
+                // Centre is quieter on the step, so a foot is not pulled to the middle.
+                // Beside you is a little hotter than behind you.
+                bands.AddRange(NovaBands("C", hit, quiet, 0.4f));
+                bands.AddRange(NovaBands("SL SR", hit, quiet, 1.25f));
+                bands.AddRange(NovaBands("RL RR", hit, quiet, 0.85f));
             }
             return bands.ToArray();
         }
@@ -351,14 +357,21 @@ static class Mix
         ];
     }
 
-    static Band[] NovaBands(string channels, float hit, float quiet) =>
-    [
-        new(channels, Shelf.Low, 90, -(4f + quiet * 3f), 0.7f),
-        new(channels, Shelf.None, 220, hit * 4f, 1.0f),
-        new(channels, Shelf.None, 1200, -(2.5f + quiet * 1.5f), 0.7f),
-        new(channels, Shelf.None, 3200, hit * 6f, 1.1f),
-        new(channels, Shelf.None, 8000, -4.5f, 1.6f),
-    ];
+    static Band[] NovaBands(string channels, float hit, float quiet, float place)
+    {
+        // place is 1 on the ears you wear, higher for a step beside you, lower in the centre.
+        var step = hit * place;
+        return
+        [
+            new(channels, Shelf.None, 34, -(4f + quiet), 2.0f),
+            new(channels, Shelf.None, 78, 2.5f * place, 1.4f),
+            new(channels, Shelf.None, 226, 6f * step, 1.5f),
+            new(channels, Shelf.None, 700, 4f * step, 1.6f),
+            new(channels, Shelf.None, 1700, 2.5f * step, 1.3f),
+            new(channels, Shelf.None, 3300, 1f * step, 2.0f),
+            new(channels, Shelf.None, 8000, -4.5f, 1.6f),
+        ];
+    }
 
     static float Lfe(MixPlan plan) => plan.Preset == Preset.Nova ? -24f : -(plan.Quiet / 100f * 18f);
 
