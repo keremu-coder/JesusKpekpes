@@ -201,6 +201,30 @@ def tuned_was_edited(out):
     except OSError:
         return True   # no record of writing it -> treat it as the user's file
 
+def apply_aim(root):
+    """Stop the crosshair walking off a shot, and make ADS/fire reach full sooner.
+
+    Deadzone is never raised. Anti-snapback only eats the fast spring-back after a flick,
+    for 12 ms, so a real correction is not held. Anti-deadzone is lowered so a hair of
+    stick drift is not turned into a kick. The trigger reaches full at 8% of the pull.
+    """
+    n = 0
+    for tag, val in (
+        ("RSAntiSnapback", "True"),
+        ("RSAntiSnapbackDelta", "180"),
+        ("RSAntiSnapbackTimeout", "12"),
+        ("RSAntiDeadZone", "8"),
+        ("L2MaxZone", "8"),
+        ("R2MaxZone", "8"),
+        ("L2OutputCurveMode", "linear"),
+        ("R2OutputCurveMode", "linear"),
+    ):
+        old = _set(root, tag, val)
+        if str(old) != str(val):
+            print(f"  {tag}: {old} -> {val}")
+            n += 1
+    return n
+
 def write_tuned(path, args):
     try:
         tree = ET.parse(path)
@@ -211,7 +235,8 @@ def write_tuned(path, args):
     print("\nChanges (old -> new):")
     n_changes = 0
 
-    # Optional stick settings: only what you pass on the command line
+    # Optional stick settings: only what you pass on the command line.
+    # Right-stick deadzone is still accepted if you pass it, and it is never raised here.
     options = {"RSDeadZone": args.rs_deadzone, "RSAntiDeadZone": args.rs_antideadzone,
                "RSMaxZone": args.rs_maxzone, "LSDeadZone": args.ls_deadzone}
     for tag, val in options.items():
@@ -238,6 +263,8 @@ def write_tuned(path, args):
         print(f"Strafe boost '{args.strafe_boost}' applied: LS X anti-deadzone {anti_x}%, X max zone {max_x}%")
         n_changes += 2
 
+    n_changes += apply_aim(root)
+
     if n_changes == 0:
         print("  (nothing to change)")
         return
@@ -248,7 +275,18 @@ def write_tuned(path, args):
     out = f"{base}_tuned{ext}"
     policy = getattr(args, "tuned_policy", "overwrite")
     if policy == "preserve-edits" and tuned_was_edited(out):
-        print(f"\nKept your edited tuned profile (not overwritten): {out}")
+        # Their other edits stay. Only the aim fix is written into the copy they already have.
+        try:
+            edited = ET.parse(out)
+        except (OSError, ET.ParseError) as e:
+            print(f"\nKept your edited tuned profile (not overwritten): {out} ({e})")
+            return
+        print(f"\nKept your edited tuned profile. Aim fix only: {out}")
+        apply_aim(edited.getroot())
+        try:
+            edited.write(out, encoding="utf-8", xml_declaration=True)
+        except OSError as e:
+            print(f"\nCould not save the aim fix: {e}")
         return
     try:
         tree.write(out, encoding="utf-8", xml_declaration=True)
