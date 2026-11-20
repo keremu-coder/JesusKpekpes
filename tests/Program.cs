@@ -522,7 +522,11 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     }
     var nova = new MixPlan(Preset.Nova, Route.Stereo, 100, 40, endpoint);
     var novaText = Mix.Config(nova);
-    Check(novaText.Contains("Fc 3200 Hz Gain 6.0 dB"), "Nova puts the step tick at 3.2 kHz");
+    Check(novaText.Contains("Fc 226 Hz Gain 6.0 dB"), "Nova puts the step body at 226 Hz");
+    Check(novaText.Contains("Fc 700 Hz Gain 4.0 dB"), "Nova puts the step scrape at 700 Hz");
+    Check(novaText.Contains("Fc 1700 Hz Gain 2.5 dB"), "Nova lifts the band that shows which side");
+    Check(novaText.Contains("Fc 3300 Hz Gain 1.0 dB"), "Nova does not turn the crack into the step");
+    Check(novaText.Contains("Fc 78 Hz Gain 2.5 dB"), "Nova keeps the low thump of a step");
     Check(novaText.Contains("Fc 8000 Hz Gain -4.5 dB"), "Nova pulls the 8 kHz peak down");
     Check(!novaText.Contains("Fc 7200 Hz"), "Nova does not use the Drop peak");
     Check(!novaText.Contains("SL SR"), "stereo Nova must not depend on surround speakers");
@@ -533,11 +537,12 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     Check(!Mix.Config(well, @"C:\Games\JesusKpekpesTune.dll").Contains("Nova "), "Well must not switch the plugin into Nova");
     var novaOff = Mix.Config(new MixPlan(Preset.Nova, Route.Stereo, 0, 0, endpoint));
     Check(novaOff.Contains("Fc 8000 Hz Gain -4.5 dB"), "the 8 kHz cut stays when the hit slider is down");
-    Check(novaOff.Contains("Fc 3200 Hz Gain 0.0 dB"), "the tick boost follows the hit slider");
+    Check(novaOff.Contains("Fc 226 Hz Gain 0.0 dB"), "the step boost follows the hit slider");
+    Check(novaOff.Contains("Fc 78 Hz Gain 2.5 dB"), "the low thump stays when the hit slider is down");
 
     var tick = new float[rate];
     var tickR = new float[rate];
-    for (var i = 0; i < rate; i++) tick[i] = MathF.Sin(2 * MathF.PI * 3200 * i / rate) * 0.03f;
+    for (var i = 0; i < rate; i++) tick[i] = MathF.Sin(2 * MathF.PI * 700 * i / rate) * 0.03f;
     var tickDry = (float[])tick.Clone();
     TuneEngine.ShapeNova([tick, tickR], rate, 100);
     var tickGain = Energy(tick, rate - rate / 5, rate / 5) / Energy(tickDry, rate - rate / 5, rate / 5);
@@ -550,7 +555,7 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
     for (var i = 0; i < burstLen; i++)
     {
         var env = MathF.Sin(i / (float)burstLen * MathF.PI);
-        burst[burstAt + i] = MathF.Sin(2 * MathF.PI * 3200 * (burstAt + i) / rate) * 0.03f * env;
+        burst[burstAt + i] = MathF.Sin(2 * MathF.PI * 700 * (burstAt + i) / rate) * 0.03f * env;
     }
     var burstDry = (float[])burst.Clone();
     TuneEngine.ShapeNova([burst, burstR], rate, 100);
@@ -698,10 +703,17 @@ Check(open.NewText.Contains("= Enabled + boost"), "boost is still set when the r
 
     var rumble = new float[rate];
     var rumbleR = new float[rate];
-    for (var i = 0; i < rate; i++) rumble[i] = MathF.Sin(2 * MathF.PI * 70 * i / rate) * 0.2f;
+    for (var i = 0; i < rate; i++) rumble[i] = MathF.Sin(2 * MathF.PI * 30 * i / rate) * 0.2f;
     var rumbleDry = (float[])rumble.Clone();
     Mix.Process(nova, rumble, rumbleR);
-    Check(Energy(rumble, rate - 4000, 4000) < Energy(rumbleDry, rate - 4000, 4000), "low rumble must be turned down");
+    Check(Energy(rumble, rate - 4000, 4000) < Energy(rumbleDry, rate - 4000, 4000), "mud under the step must be turned down");
+
+    var body = new float[rate];
+    var bodyR = new float[rate];
+    for (var i = 0; i < rate; i++) body[i] = MathF.Sin(2 * MathF.PI * 226 * i / rate) * 0.05f;
+    var bodyDry = (float[])body.Clone();
+    Mix.Process(nova, body, bodyR);
+    Check(Energy(body, rate - 4000, 4000) > Energy(bodyDry, rate - 4000, 4000) * 2f, "the step body must come up");
 
     var fold = new MixPlan(Preset.Nova, Route.Surround, 100, 40, endpoint);
     var foldText = Mix.Config(fold);
