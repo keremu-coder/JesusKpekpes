@@ -228,8 +228,8 @@ static void arm_nova(Lane* lane, float rate) {
     if (rate < 1000.f) rate = 48000.f;
     memset(lane, 0, sizeof *lane);
     set_band(&lane->gun, 1400.f, 0.7f, rate);
-    set_band(&lane->foot, 220.f, 1.0f, rate);
-    set_band(&lane->tick, 3200.f, 1.1f, rate);
+    set_band(&lane->foot, 226.f, 1.5f, rate);
+    set_band(&lane->tick, 700.f, 1.6f, rate);
     lane->fast_a = 1.f - expf(-1.f / (rate * 0.0025f));
     lane->fast_r = 1.f - expf(-1.f / (rate * 0.040f));
     lane->weight_r = 1.f - expf(-1.f / (rate * 0.080f));
@@ -401,7 +401,7 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
                     step = 1.f;
                 }
                 if (step_hit && bank->hit > 0.001f) {
-                    float db = 10.f * bank->hit;
+                    float db = 12.f * bank->hit;
                     float edge = (step - 1.f) / 1.5f;
                     if (edge < 0.f) edge = 0.f;
                     if (edge > 1.f) edge = 1.f;
@@ -412,22 +412,48 @@ static void nova_replace(Effect* effect, float** inputs, float** outputs, i32 fr
                     nch > 2 ? bank->lane[2].shot_peak : 0.f, nch, crack, gunish, &bank->own_hold);
                 (void)who;
                 bank->own = 1.f;
-                for (ch = 0; ch < nch; ch++) {
-                    Lane* lane;
-                    float gun_gain, y, mag;
-                    if (!inputs[ch] || !outputs[ch]) continue;
-                    lane = &bank->lane[ch];
-                    gun_gain = 1.f;
-                    if (gunish && !step_hit && (nch <= 2 || ch < 3)) {
-                        cut = reduction(lane->gun_env, -16.f, 2.f / 3.f);
-                        if (cut > 6.f) cut = 6.f;
-                        gun_gain = powf(10.f, -cut / 20.f);
+                {
+                    /* A step that is already to one side gets a little more there, and a hair less
+                       in the quiet ear. A centred step is left centred. A shot is not moved. */
+                    int widen = 0;
+                    float ear_up = 1.f, ear_down = 1.f;
+                    if (step_hit && !gunish && nch >= 2 && bank->hit > 0.001f) {
+                        float left = fabsf(weight_b[0]) + fabsf(tick_b[0]);
+                        float right = fabsf(weight_b[1]) + fabsf(tick_b[1]);
+                        float sum = left + right;
+                        float pan = sum > 1e-5f ? (left - right) / sum : 0.f;
+                        float side_amt = fabsf(pan);
+                        if (side_amt > 0.12f) {
+                            float pan_db = 3.f * side_amt * bank->hit;
+                            ear_up = powf(10.f, pan_db / 20.f);
+                            ear_down = powf(10.f, -pan_db * 0.35f / 20.f);
+                            widen = pan > 0.f ? 1 : -1;
+                        }
                     }
-                    y = other_b[ch] * cinema + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
-                    mag = fabsf(y);
-                    if (mag > 0.8912509f)
-                        y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
-                    outputs[ch][i] = y;
+                    for (ch = 0; ch < nch; ch++) {
+                        Lane* lane;
+                        float gun_gain, y, mag;
+                        if (!inputs[ch] || !outputs[ch]) continue;
+                        lane = &bank->lane[ch];
+                        gun_gain = 1.f;
+                        if (gunish && !step_hit && (nch <= 2 || ch < 3)) {
+                            cut = reduction(lane->gun_env, -16.f, 2.f / 3.f);
+                            if (cut > 6.f) cut = 6.f;
+                            gun_gain = powf(10.f, -cut / 20.f);
+                        }
+                        y = other_b[ch] * cinema + weight_b[ch] * weight_gain + tick_b[ch] * tick_gain + gun_b[ch] * gun_gain;
+                        if (widen == 1) {
+                            if (ch == 0) y *= ear_up;
+                            else if (ch == 1) y *= ear_down;
+                        } else if (widen == -1) {
+                            if (ch == 1) y *= ear_up;
+                            else if (ch == 0) y *= ear_down;
+                        }
+                        mag = fabsf(y);
+                        if (mag > 0.8912509f)
+                            y = copysignf(0.8912509f + tanhf((mag - 0.8912509f) / 0.05f) * 0.05f, y);
+                        outputs[ch][i] = y;
+                    }
                 }
             }
         }
@@ -1097,7 +1123,7 @@ static int check_nova(void) {
     if (get_param(e, 0) != 0.f || get_param(e, 1) != 1.f) bad = 1;
     e->set_param(e, 0, 1.f);
     e->set_param(e, 1, 1.f);
-    for (i = 0; i < n; i++) tone[i] = sinf(2.f * 3.14159265f * 3200.f * i / sr) * 0.03f;
+    for (i = 0; i < n; i++) tone[i] = sinf(2.f * 3.14159265f * 700.f * i / sr) * 0.03f;
     memcpy(dry, tone, sizeof dry);
     memset(tone_r, 0, sizeof tone_r);
     replace(e, in, out, n);
@@ -1110,7 +1136,7 @@ static int check_nova(void) {
     memset(burst_r, 0, sizeof burst_r);
     for (i = 0; i < burst_len; i++) {
         float env = sinf((float)i / (float)burst_len * 3.14159265f);
-        burst[burst_at + i] = sinf(2.f * 3.14159265f * 3200.f * (burst_at + i) / sr) * 0.03f * env;
+        burst[burst_at + i] = sinf(2.f * 3.14159265f * 700.f * (burst_at + i) / sr) * 0.03f * env;
     }
     memcpy(burst_dry, burst, sizeof burst);
     e = VSTPluginMain(0);
