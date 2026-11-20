@@ -150,8 +150,8 @@ public static class TuneEngine
         var gun = new Bandpass[count];
         for (var k = 0; k < count; k++)
         {
-            weight[k] = Bandpass.Open(220f, 1.0f, rate);
-            tick[k] = Bandpass.Open(3200f, 1.1f, rate);
+            weight[k] = Bandpass.Open(226f, 1.5f, rate);
+            tick[k] = Bandpass.Open(700f, 1.6f, rate);
             gun[k] = Bandpass.Open(1400f, 0.7f, rate);
         }
         var weightFast = new float[count];
@@ -222,7 +222,7 @@ public static class TuneEngine
             }
             if (stepHit && amount > 0.001f)
             {
-                var db = 10f * amount;
+                var db = 12f * amount;
                 var edge = (step - 1f) / 1.5f;
                 if (edge < 0f) edge = 0f;
                 if (edge > 1f) edge = 1f;
@@ -231,6 +231,24 @@ public static class TuneEngine
             var who = WhoFired(count > 0 ? shotPeak[0] : 0f, count > 1 ? shotPeak[1] : 0f, count > 2 ? shotPeak[2] : 0f, count, crack, gunish, ref hold);
             _ = who;
             own = 1f;
+            var widen = 0;
+            var earUp = 1f;
+            var earDown = 1f;
+            if (stepHit && !gunish && count >= 2 && amount > 0.001f)
+            {
+                var left = MathF.Abs(weightBand[0]) + MathF.Abs(tickBand[0]);
+                var right = MathF.Abs(weightBand[1]) + MathF.Abs(tickBand[1]);
+                var sum = left + right;
+                var pan = sum > 1e-5f ? (left - right) / sum : 0f;
+                var sideAmt = MathF.Abs(pan);
+                if (sideAmt > 0.12f)
+                {
+                    var panDb = 3f * sideAmt * amount;
+                    earUp = MathF.Pow(10f, panDb / 20f);
+                    earDown = MathF.Pow(10f, -panDb * 0.35f / 20f);
+                    widen = pan > 0f ? 1 : -1;
+                }
+            }
             for (var k = 0; k < count; k++)
             {
                 var gunGain = 1f;
@@ -241,6 +259,16 @@ public static class TuneEngine
                     gunGain = MathF.Pow(10f, -cut / 20f);
                 }
                 var y = other[k] * cinema + weightBand[k] * weightGain + tickBand[k] * tickGain + gunBand[k] * gunGain;
+                if (widen == 1)
+                {
+                    if (k == 0) y *= earUp;
+                    else if (k == 1) y *= earDown;
+                }
+                else if (widen == -1)
+                {
+                    if (k == 1) y *= earUp;
+                    else if (k == 0) y *= earDown;
+                }
                 var mag = MathF.Abs(y);
                 if (mag > ceiling) y = MathF.CopySign(ceiling + MathF.Tanh((mag - ceiling) / 0.05f) * 0.05f, y);
                 ears[k][i] = y;
