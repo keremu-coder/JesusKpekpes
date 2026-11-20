@@ -22,6 +22,7 @@ import argparse
 import ctypes
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import time
@@ -201,28 +202,72 @@ def tuned_was_edited(out):
     except OSError:
         return True   # no record of writing it -> treat it as the user's file
 
-def apply_aim(root):
+# The aim fix. Deadzone is never raised.
+AIM = (
+    ("RSAntiSnapback", "True"),
+    ("RSAntiSnapbackDelta", "180"),
+    ("RSAntiSnapbackTimeout", "12"),
+    ("RSAntiDeadZone", "8"),
+    ("L2MaxZone", "8"),
+    ("R2MaxZone", "8"),
+    ("L2OutputCurveMode", "linear"),
+    ("R2OutputCurveMode", "linear"),
+)
+
+def apply_aim(root, skip=()):
     """Stop the crosshair walking off a shot, and make ADS/fire reach full sooner.
 
     Deadzone is never raised. Anti-snapback only eats the fast spring-back after a flick,
     for 12 ms, so a real correction is not held. Anti-deadzone is lowered so a hair of
     stick drift is not turned into a kick. The trigger reaches full at 8% of the pull.
+    A setting the person passed on the command line (listed in skip) is left as they asked.
     """
     n = 0
-    for tag, val in (
-        ("RSAntiSnapback", "True"),
-        ("RSAntiSnapbackDelta", "180"),
-        ("RSAntiSnapbackTimeout", "12"),
-        ("RSAntiDeadZone", "8"),
-        ("L2MaxZone", "8"),
-        ("R2MaxZone", "8"),
-        ("L2OutputCurveMode", "linear"),
-        ("R2OutputCurveMode", "linear"),
-    ):
+    for tag, val in AIM:
+        if tag in skip:
+            continue
         old = _set(root, tag, val)
         if str(old) != str(val):
             print(f"  {tag}: {old} -> {val}")
             n += 1
+    return n
+
+def apply_aim_text(path, skip=()):
+    """The same aim fix for a tuned copy the person has already edited.
+
+    Only the value inside each aim tag is replaced. Every other byte stays: their comments,
+    their line endings, their spacing. A tag that is not there is not invented, a tag inside a
+    comment is not touched, and the file is not written at all when nothing needs to change.
+    Returns how many settings changed, or -1 if the file could not be read or saved.
+    """
+    try:
+        with open(path, "rb") as f:
+            text = f.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"\nCould not read the tuned profile for the aim fix: {e}")
+        return -1
+    comments = [m.span() for m in re.finditer(r"<!--.*?-->", text, re.DOTALL)]
+    n = 0
+    for tag, val in AIM:
+        if tag in skip:
+            continue
+        for m in re.finditer(r"<" + tag + r">([^<]*)</" + tag + r">", text):
+            if any(a <= m.start() < b for a, b in comments):
+                continue
+            old = m.group(1)
+            if old != val:
+                text = text[:m.start(1)] + val + text[m.end(1):]
+                print(f"  {tag}: {old} -> {val}")
+                n += 1
+            break
+    if n == 0:
+        return 0
+    try:
+        with open(path, "wb") as f:
+            f.write(text.encode("utf-8"))
+    except OSError as e:
+        print(f"\nCould not save the aim fix: {e}")
+        return -1
     return n
 
 def write_tuned(path, args):
@@ -239,6 +284,7 @@ def write_tuned(path, args):
     # Right-stick deadzone is still accepted if you pass it, and it is never raised here.
     options = {"RSDeadZone": args.rs_deadzone, "RSAntiDeadZone": args.rs_antideadzone,
                "RSMaxZone": args.rs_maxzone, "LSDeadZone": args.ls_deadzone}
+    asked = {tag for tag, val in options.items() if val is not None}
     for tag, val in options.items():
         if val is None:
             continue
@@ -263,7 +309,7 @@ def write_tuned(path, args):
         print(f"Strafe boost '{args.strafe_boost}' applied: LS X anti-deadzone {anti_x}%, X max zone {max_x}%")
         n_changes += 2
 
-    n_changes += apply_aim(root)
+    n_changes += apply_aim(root, asked)
 
     if n_changes == 0:
         print("  (nothing to change)")
@@ -275,18 +321,12 @@ def write_tuned(path, args):
     out = f"{base}_tuned{ext}"
     policy = getattr(args, "tuned_policy", "overwrite")
     if policy == "preserve-edits" and tuned_was_edited(out):
-        # Their other edits stay. Only the aim fix is written into the copy they already have.
-        try:
-            edited = ET.parse(out)
-        except (OSError, ET.ParseError) as e:
-            print(f"\nKept your edited tuned profile (not overwritten): {out} ({e})")
-            return
-        print(f"\nKept your edited tuned profile. Aim fix only: {out}")
-        apply_aim(edited.getroot())
-        try:
-            edited.write(out, encoding="utf-8", xml_declaration=True)
-        except OSError as e:
-            print(f"\nCould not save the aim fix: {e}")
+        # Their edits stay, byte for byte. Only the aim settings are brought up to date, and only if they differ.
+        fixed = apply_aim_text(out, asked)
+        if fixed > 0:
+            print(f"\nKept your edited tuned profile. Aim fix only: {out}")
+        else:
+            print(f"\nKept your edited tuned profile (not overwritten): {out}")
         return
     try:
         tree.write(out, encoding="utf-8", xml_declaration=True)
