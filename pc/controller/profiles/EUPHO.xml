@@ -28,8 +28,8 @@
   <TouchpadClickPassthru>False</TouchpadClickPassthru>
   <L2AntiDeadZone>83</L2AntiDeadZone>
   <R2AntiDeadZone>83</R2AntiDeadZone>
-  <L2MaxZone>15</L2MaxZone>
-  <R2MaxZone>15</R2MaxZone>
+  <L2MaxZone>8</L2MaxZone>
+  <R2MaxZone>8</R2MaxZone>
   <L2MaxOutput>100</L2MaxOutput>
   <R2MaxOutput>100</R2MaxOutput>
   <ButtonMouseSensitivity>25</ButtonMouseSensitivity>
@@ -39,7 +39,7 @@
   <LSDeadZone>0</LSDeadZone>
   <RSDeadZone>0</RSDeadZone>
   <LSAntiDeadZone>24</LSAntiDeadZone>
-  <RSAntiDeadZone>25</RSAntiDeadZone>
+  <RSAntiDeadZone>8</RSAntiDeadZone>
   <LSMaxZone>58</LSMaxZone>
   <RSMaxZone>57</RSMaxZone>
   <LSVerticalScale>150</LSVerticalScale>
@@ -184,11 +184,11 @@
   <SquareStickRoundness>200</SquareStickRoundness>
   <SquareRStickRoundness>200</SquareRStickRoundness>
   <LSAntiSnapback>False</LSAntiSnapback>
-  <RSAntiSnapback>False</RSAntiSnapback>
+  <RSAntiSnapback>True</RSAntiSnapback>
   <LSAntiSnapbackDelta>160</LSAntiSnapbackDelta>
-  <RSAntiSnapbackDelta>256</RSAntiSnapbackDelta>
+  <RSAntiSnapbackDelta>180</RSAntiSnapbackDelta>
   <LSAntiSnapbackTimeout>40</LSAntiSnapbackTimeout>
-  <RSAntiSnapbackTimeout>0</RSAntiSnapbackTimeout>
+  <RSAntiSnapbackTimeout>12</RSAntiSnapbackTimeout>
   <LSOutputMode>Controls</LSOutputMode>
   <RSOutputMode>Controls</RSOutputMode>
   <LSOutputSettings>
@@ -214,7 +214,7 @@
       <HapticPowerLevel>7</HapticPowerLevel>
     </RumbleSettings>
   </DualSenseControllerSettings>
-  <L2OutputCurveMode>custom</L2OutputCurveMode>
+  <L2OutputCurveMode>linear</L2OutputCurveMode>
   <L2OutputCurveCustom>0.00, 1.00, 0.00, 1.00</L2OutputCurveCustom>
   <L2TwoStageMode>Disabled</L2TwoStageMode>
   <R2TwoStageMode>Disabled</R2TwoStageMode>
@@ -222,7 +222,7 @@
   <R2HipFireTime>0</R2HipFireTime>
   <L2TriggerEffect>None</L2TriggerEffect>
   <R2TriggerEffect>None</R2TriggerEffect>
-  <R2OutputCurveMode>custom</R2OutputCurveMode>
+  <R2OutputCurveMode>linear</R2OutputCurveMode>
   <R2OutputCurveCustom>0.00, 1.00, 0.00, 1.00</R2OutputCurveCustom>
   <SXOutputCurveMode>custom</SXOutputCurveMode>
   <SXOutputCurveCustom>0.00, 0.45, 0.35, 1.00</SXOutputCurveCustom>
