@@ -693,7 +693,7 @@ function Get-PcExclusionRisk {
 function Get-PcDefenderCandidates {
     # Real files found on this PC, nothing guessed. Returns objects: Name, Path, Policy (Offer|Protected), Facts, Risk.
     param($Cfg)
-    $raw = New-Object System.Collections.Generic.List[object]
+    $raw = New-Object System.Collections.ArrayList
     foreach ($p in (Get-CodExePaths)) { [void]$raw.Add(@{ Name = ('Call of Duty (' + (Split-Path -Path $p -Leaf) + ')'); Path = $p; Policy = 'Offer' }) }
     $bnPolicy = 'Protected'
     if ($Cfg -and $Cfg.DefenderOfferBattleNet) { $bnPolicy = 'Offer' }
@@ -705,7 +705,7 @@ function Get-PcDefenderCandidates {
     if (Get-Command Find-DS4Windows -ErrorAction SilentlyContinue) { $ds4 = Find-DS4Windows }
     if ($ds4 -and (Test-Path -LiteralPath $ds4 -PathType Leaf)) { [void]$raw.Add(@{ Name = 'DS4Windows'; Path = $ds4; Policy = 'Offer' }) }
     $seen = @{}
-    $out = New-Object System.Collections.Generic.List[object]
+    $out = New-Object System.Collections.ArrayList
     foreach ($c in $raw) {
         $k = ([string]$c.Path).ToLowerInvariant()
         if ($seen.ContainsKey($k)) { continue }
@@ -713,7 +713,7 @@ function Get-PcDefenderCandidates {
         $facts = Get-PcExeFacts $c.Path
         [void]$out.Add([pscustomobject]@{ Name = $c.Name; Path = $c.Path; Policy = $c.Policy; Facts = $facts; Risk = (Get-PcExclusionRisk $facts) })
     }
-    return @($out)
+    return @($out.ToArray())
 }
 
 function Test-PcApprovalValid {
@@ -751,7 +751,7 @@ function Get-PcDefenderState {
     param($Cfg)
     $cands = @(Get-PcDefenderCandidates $Cfg)
     $appr = @(Read-PcApprovals)
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = New-Object System.Collections.ArrayList
     foreach ($c in $cands) {
         $rec = $null
         foreach ($a in $appr) { if ([string]$a.Path -ieq [string]$c.Path) { $rec = $a } }
@@ -760,7 +760,7 @@ function Get-PcDefenderState {
         elseif ($rec) { if (Test-PcApprovalValid $rec $c.Facts) { $st = 'Approved' } else { $st = 'ChangedSinceApproval' } }
         [void]$rows.Add([pscustomobject]@{ Candidate = $c; Record = $rec; State = $st })
     }
-    return @($rows)
+    return @($rows.ToArray())
 }
 
 function Invoke-PcDefender {
@@ -786,9 +786,9 @@ function Invoke-PcDefender {
     }
     Write-Say '  A process exclusion makes Defender skip scanning files that program touches. It stays until removed.' 'DarkGray'
     Write-Say '  Only whole program paths are used (never folders). Undo removes only what this optimizer added.' 'DarkGray'
-    $approvals = New-Object System.Collections.Generic.List[object]
+    $approvals = New-Object System.Collections.ArrayList
     foreach ($a in @(Read-PcApprovals)) { [void]$approvals.Add($a) }
-    $toApply = New-Object System.Collections.Generic.List[object]
+    $toApply = New-Object System.Collections.ArrayList
     $waiting = 0
     foreach ($row in $rows) {
         $c = $row.Candidate
