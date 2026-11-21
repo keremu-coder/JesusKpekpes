@@ -624,59 +624,223 @@ function Invoke-PcDisk {
     if (-not $script:WhatIfMode) { & powercfg.exe /hibernate off | Out-Null }
 }
 
-# ---------------- Defender ----------------
-function Get-PcDefenderWanted {
-    $paths = New-Object System.Collections.Generic.List[string]
-    $procs = New-Object System.Collections.Generic.List[string]
-    foreach ($r in (Get-CodInstallRoots)) { [void]$paths.Add($r) }
-    foreach ($r in (Get-BattleNetRoots)) {
-        [void]$paths.Add($r)
-        $bn = Join-Path $r 'Battle.net.exe'
-        if (Test-Path -LiteralPath $bn) { [void]$procs.Add($bn) }
-        Get-ChildItem -LiteralPath $r -Filter 'Battle.net.exe' -Recurse -Depth 3 -File -ErrorAction SilentlyContinue | ForEach-Object { [void]$procs.Add($_.FullName) }
+# ---------------- Defender: PROCESS exclusions the person approved ----------------
+# A process exclusion tells Defender to skip real-time scanning of every file the named program touches. It stays
+# registered until it is removed (it does not switch on and off when the game starts and stops). So:
+#   - only full executable paths, never folders;
+#   - only after the person says yes (the answer is kept in an admin-only file, pinned to the publisher or SHA-256);
+#   - Battle.net stays protected unless the config says DefenderOfferBattleNet = true and the person then approves;
+#   - every add is checked against Get-MpPreference, and a rejected add is reported as a failure;
+#   - only exclusions that were NOT there before are journaled, so Undo never removes one of yours.
+
+function Get-PcApprovalFile { return (Join-Path (Join-Path $script:DataRoot 'pc') 'defender-approved.json') }
+
+function Read-PcApprovals {
+    $f = Get-PcApprovalFile
+    if (-not (Test-Path -LiteralPath $f)) { return @() }
+    try {
+        $raw = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+        return @($raw | Where-Object { $_ -and $_.Path })
+    } catch { Write-KLog ('Defender approvals unreadable: ' + $_.Exception.Message) 'WARN'; return @() }
+}
+
+function Save-PcApprovals {
+    param($List)
+    if ($script:WhatIfMode) { return }
+    $f = Get-PcApprovalFile
+    $dir = Split-Path -Path $f -Parent
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $json = ConvertTo-Json -InputObject @($List) -Depth 4
+    [IO.File]::WriteAllText($f, $json, (New-Object Text.UTF8Encoding($false)))
+}
+
+function Get-PcPublisherName {
+    param([string]$Subject)
+    if ($Subject -match 'CN=("([^"]+)"|[^,]+)') { return ([string]$Matches[1]).Trim('"') }
+    return $Subject
+}
+
+function Get-PcExeFacts {
+    # Everything we can prove about one executable, read only.
+    param([string]$Path)
+    $f = [ordered]@{ Path = $Path; Exists = $false; Sha256 = ''; SigStatus = 'NotChecked'; Signer = ''; Owner = ''; AdminOnly = $false; WhyNot = '' }
+    if (-not $Path -or $Path -notmatch '\.exe$' -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $f.WhyNot = 'not an existing .exe file'
+        return [pscustomobject]$f
     }
-    foreach ($p in @("$env:ProgramData\Battle.net", "$env:LOCALAPPDATA\Battle.net")) { if (Test-Path -LiteralPath $p) { [void]$paths.Add($p) } }
-    foreach ($p in (Get-CodExePaths)) { [void]$procs.Add($p) }
+    $f.Exists = $true
+    try { $f.Sha256 = [string](Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash } catch { }
+    try {
+        $sig = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
+        $f.SigStatus = [string]$sig.Status
+        if ($sig.SignerCertificate) { $f.Signer = [string]$sig.SignerCertificate.Subject }
+    } catch { $f.SigStatus = 'Unknown' }
+    try { $f.Owner = [string](Get-Acl -LiteralPath $Path -ErrorAction Stop).Owner } catch { }
+    $s = Test-KPathSafeForElevation $Path
+    $f.AdminOnly = [bool]$s.Safe
+    $f.WhyNot = [string]$s.Reason
+    return [pscustomobject]$f
+}
+
+function Get-PcExclusionRisk {
+    # Low: signed and only admins can change it. Medium: signed, but a normal account can change the file or its folder.
+    # High: no valid signature, so only the SHA-256 vouches for it.
+    param($Facts)
+    if ($Facts.SigStatus -eq 'Valid') { if ($Facts.AdminOnly) { return 'Low' } else { return 'Medium' } }
+    return 'High'
+}
+
+function Get-PcDefenderCandidates {
+    # Real files found on this PC, nothing guessed. Returns objects: Name, Path, Policy (Offer|Protected), Facts, Risk.
+    param($Cfg)
+    $raw = New-Object System.Collections.Generic.List[object]
+    foreach ($p in (Get-CodExePaths)) { [void]$raw.Add(@{ Name = ('Call of Duty (' + (Split-Path -Path $p -Leaf) + ')'); Path = $p; Policy = 'Offer' }) }
+    $bnPolicy = 'Protected'
+    if ($Cfg -and $Cfg.DefenderOfferBattleNet) { $bnPolicy = 'Offer' }
+    foreach ($r in (Get-BattleNetRoots)) {
+        $bn = Join-Path $r 'Battle.net.exe'
+        if (Test-Path -LiteralPath $bn -PathType Leaf) { [void]$raw.Add(@{ Name = 'Battle.net'; Path = $bn; Policy = $bnPolicy }) }
+    }
     $ds4 = ''
     if (Get-Command Find-DS4Windows -ErrorAction SilentlyContinue) { $ds4 = Find-DS4Windows }
-    if ($ds4 -and (Test-Path -LiteralPath $ds4)) { [void]$procs.Add($ds4); [void]$paths.Add((Split-Path $ds4 -Parent)) }
-    # An exclusion tells Defender to never look there again, and the logon task re-adds it with admin rights.
-    # So only places a normal account cannot write to are accepted (lib\Safety.ps1). Everything else is
-    # reported as skipped -- that includes %LOCALAPPDATA%, Downloads, and Steam libraries whose folder users can write.
-    $okPaths = New-Object System.Collections.Generic.List[string]
-    $okProcs = New-Object System.Collections.Generic.List[string]
-    $skipped = New-Object System.Collections.Generic.List[string]
-    foreach ($p in @($paths | Select-Object -Unique)) {
-        $s = Test-KPathSafeForElevation $p
-        if ($s.Safe) { [void]$okPaths.Add($p) } else { [void]$skipped.Add($p + ' (' + $s.Reason + ')') }
+    if ($ds4 -and (Test-Path -LiteralPath $ds4 -PathType Leaf)) { [void]$raw.Add(@{ Name = 'DS4Windows'; Path = $ds4; Policy = 'Offer' }) }
+    $seen = @{}
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($c in $raw) {
+        $k = ([string]$c.Path).ToLowerInvariant()
+        if ($seen.ContainsKey($k)) { continue }
+        $seen[$k] = $true
+        $facts = Get-PcExeFacts $c.Path
+        [void]$out.Add([pscustomobject]@{ Name = $c.Name; Path = $c.Path; Policy = $c.Policy; Facts = $facts; Risk = (Get-PcExclusionRisk $facts) })
     }
-    foreach ($p in @($procs | Select-Object -Unique)) {
-        $s = Test-KPathSafeForElevation $p
-        if ($s.Safe) { [void]$okProcs.Add($p) } else { [void]$skipped.Add($p + ' (' + $s.Reason + ')') }
+    return @($out)
+}
+
+function Test-PcApprovalValid {
+    # An approval only counts while the file is still what the person approved: same publisher if it is signed,
+    # otherwise the same SHA-256. A replaced or modified file has to be approved again.
+    param($Rec, $Facts)
+    if (-not $Facts.Exists) { return $false }
+    if ($Rec.Signer) { return ($Facts.SigStatus -eq 'Valid' -and [string]$Facts.Signer -eq [string]$Rec.Signer) }
+    return ($Rec.Sha256 -and [string]$Facts.Sha256 -ieq [string]$Rec.Sha256)
+}
+
+function Read-PcYesNo {
+    param([string]$Question)
+    $a = Read-Host ('  ' + $Question + ' (y/n)')
+    return ($a -match '^(y|yes)$')
+}
+
+function Show-PcCandidate {
+    param($C)
+    $f = $C.Facts
+    $pub = 'none (not signed, or the signature is not valid)'
+    if ($f.SigStatus -eq 'Valid' -and $f.Signer) { $pub = (Get-PcPublisherName $f.Signer) + ' (signature valid)' }
+    elseif ($f.SigStatus -ne 'Valid') { $pub = 'no valid signature (' + $f.SigStatus + ')' }
+    $who = 'only administrators can change it'
+    if (-not $f.AdminOnly) { $who = 'a normal account can change it (' + $f.WhyNot + ')' }
+    Write-Say ('  ' + $C.Name) 'White'
+    Write-Say ('    path      : ' + $C.Path) 'Gray'
+    Write-Say ('    publisher : ' + $pub) 'Gray'
+    Write-Say ('    permission: ' + $who) 'Gray'
+    Write-Say ('    risk      : ' + $C.Risk) 'Gray'
+}
+
+function Get-PcDefenderState {
+    # Read only. Used by the Check screen and by the optimizer, so both tell the same story.
+    param($Cfg)
+    $cands = @(Get-PcDefenderCandidates $Cfg)
+    $appr = @(Read-PcApprovals)
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($c in $cands) {
+        $rec = $null
+        foreach ($a in $appr) { if ([string]$a.Path -ieq [string]$c.Path) { $rec = $a } }
+        $st = 'NotApproved'
+        if ($c.Policy -eq 'Protected') { $st = 'Protected' }
+        elseif ($rec) { if (Test-PcApprovalValid $rec $c.Facts) { $st = 'Approved' } else { $st = 'ChangedSinceApproval' } }
+        [void]$rows.Add([pscustomobject]@{ Candidate = $c; Record = $rec; State = $st })
     }
-    return [pscustomobject]@{ Paths = @($okPaths); Procs = @($okProcs); Skipped = @($skipped) }
+    return @($rows)
 }
 
 function Invoke-PcDefender {
-    if ($script:WhatIfMode) { return $true }
-    try {
-        $mp = Get-MpPreference -ErrorAction Stop
-        $havePath = @($mp.ExclusionPath)
-        $haveProc = @($mp.ExclusionProcess)
-        $w = Get-PcDefenderWanted
-        foreach ($sk in $w.Skipped) { Write-Say ('  not excluded (a normal account can change it): ' + $sk) 'DarkGray' }
-        foreach ($p in $w.Paths) {
-            if ($havePath -contains $p) { continue }
-            [void](Add-KEntry ('defexcl|Path|' + $p) @{ Type = 'defexcl'; Kind = 'Path'; Value = $p })
-            Add-MpPreference -ExclusionPath $p -ErrorAction SilentlyContinue
+    # Returns $true when everything approved is really excluded (or nothing is approved). On a problem it
+    # returns $false and sets $script:PcDefenderProblem to the text for the summary.
+    param($Cfg, [switch]$Reapply)
+    $script:PcDefenderProblem = ''
+    $mp = $null
+    if (-not $script:WhatIfMode) {
+        try { $mp = Get-MpPreference -ErrorAction Stop } catch {
+            Write-KLog ('Defender not available: ' + $_.Exception.Message) 'WARN'
+            $script:PcDefenderProblem = 'Defender not available (another antivirus, or Defender is managed by policy)'
+            Write-Say '  Defender could not be read, so nothing was changed.' 'Yellow'
+            return $false
         }
-        foreach ($p in $w.Procs) {
-            if ($haveProc -contains $p) { continue }
-            [void](Add-KEntry ('defexcl|Process|' + $p) @{ Type = 'defexcl'; Kind = 'Process'; Value = $p })
-            Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
-        }
+    }
+    $interactive = (-not $script:Silent) -and (-not $script:WhatIfMode) -and (-not $Reapply)
+    $rows = @(Get-PcDefenderState $Cfg)
+    if ($rows.Count -eq 0) {
+        Write-Say '  No Call of Duty, Battle.net or DS4Windows program file was found, so there is nothing to exclude.' 'DarkGray'
+        foreach ($r in (Get-CodInstallRoots)) { Write-Say ('  game folder found but no known game program inside it: ' + $r) 'DarkGray' }
         return $true
-    } catch { Write-KLog ('Defender not available: ' + $_.Exception.Message) 'WARN'; return $false }
+    }
+    Write-Say '  A process exclusion makes Defender skip scanning files that program touches. It stays until removed.' 'DarkGray'
+    Write-Say '  Only whole program paths are used (never folders). Undo removes only what this optimizer added.' 'DarkGray'
+    $approvals = New-Object System.Collections.Generic.List[object]
+    foreach ($a in @(Read-PcApprovals)) { [void]$approvals.Add($a) }
+    $toApply = New-Object System.Collections.Generic.List[object]
+    $waiting = 0
+    foreach ($row in $rows) {
+        $c = $row.Candidate
+        if ($row.State -eq 'Protected') { Write-Say ('  ' + $c.Name + ': PROTECTED, not excluded (' + $c.Path + ')') 'DarkGray'; continue }
+        if ($row.State -eq 'Approved') { [void]$toApply.Add($c); continue }
+        if ($row.State -eq 'ChangedSinceApproval') {
+            Write-Say ('  ' + $c.Name + ': the file changed since you approved it, so it is not excluded until you approve again (' + $c.Path + ')') 'Yellow'
+        }
+        if ($interactive) {
+            Show-PcCandidate $c
+            $q = 'Exclude this program from Defender real-time scanning?'
+            if ($c.Name -eq 'Battle.net') { $q = 'Battle.net downloads and runs game updates. Exclude it anyway?' }
+            if (Read-PcYesNo $q) {
+                $rec = [pscustomobject]@{ Name = $c.Name; Path = $c.Path; Sha256 = [string]$c.Facts.Sha256; Signer = $(if ($c.Facts.SigStatus -eq 'Valid') { [string]$c.Facts.Signer } else { '' }); Approved = (Get-Date).ToString('s') }
+                $keep = @($approvals | Where-Object { [string]$_.Path -ine [string]$c.Path })
+                $approvals.Clear(); foreach ($k in $keep) { [void]$approvals.Add($k) }
+                [void]$approvals.Add($rec)
+                Save-PcApprovals $approvals
+                [void]$toApply.Add($c)
+            } else { Write-Say ('  ' + $c.Name + ': not excluded (you said no)') 'DarkGray' }
+        } else {
+            $waiting++
+            Write-Say ('  ' + $c.Name + ': waiting for your approval (' + $c.Path + ')') 'Yellow'
+        }
+    }
+    if ($waiting -gt 0) { Write-Say '  To approve, run Optimize PC from the menu and answer the questions. Silent runs never approve for you.' 'Yellow' }
+    if ($script:WhatIfMode) {
+        foreach ($c in $toApply) { Write-Say ('  would exclude process: ' + $c.Path) 'Yellow' }
+        return $true
+    }
+    $failed = New-Object System.Collections.Generic.List[string]
+    foreach ($c in $toApply) {
+        $p = [string]$c.Path
+        $have = @($mp.ExclusionProcess)
+        if (@($have | Where-Object { [string]$_ -ieq $p }).Count -gt 0) { Write-Say ('  already excluded: ' + $p) 'DarkGray'; continue }
+        [void](Add-KEntry ('defexcl|Process|' + $p) @{ Type = 'defexcl'; Kind = 'Process'; Value = $p })
+        $err = ''
+        try { Add-MpPreference -ExclusionProcess $p -ErrorAction Stop } catch { $err = $_.Exception.Message }
+        $now = @()
+        try { $now = @((Get-MpPreference -ErrorAction Stop).ExclusionProcess) } catch { }
+        if (@($now | Where-Object { [string]$_ -ieq $p }).Count -gt 0) { Write-Say ('  excluded (checked in Defender): ' + $p) 'Green' }
+        else {
+            if (-not $err) { $err = 'Defender accepted the command but the exclusion is not in its list (Tamper Protection or policy may block it)' }
+            Write-Say ('  FAILED: ' + $p + ' - ' + $err) 'Red'
+            [void]$failed.Add($c.Name)
+        }
+    }
+    if ($failed.Count -gt 0) {
+        $script:PcDefenderProblem = 'Defender refused: ' + ($failed -join ', ')
+        return $false
+    }
+    return $true
 }
 
 # ---------------- logon re-apply ----------------
@@ -849,19 +1013,32 @@ public static extern int NtQueryTimerResolution(out uint MinimumResolution, out 
         }
     }
 
-    # Defender
+    # Defender (approved process exclusions)
     if ($Cfg.DefenderExclusions) {
         try {
             $mp = Get-MpPreference -ErrorAction Stop
-            $w = Get-PcDefenderWanted
-            $missing = @()
-            foreach ($p in $w.Paths) { if (@($mp.ExclusionPath) -notcontains $p) { $missing += $p } }
-            foreach ($p in $w.Procs) { if (@($mp.ExclusionProcess) -notcontains $p) { $missing += $p } }
-            $count = $w.Paths.Count + $w.Procs.Count
-            if ($count -eq 0) { [void]$r.Add((New-KResult 'Defender exclusions' 'NA' 'no game/launcher install found' 'Defender')) }
-            elseif ($missing.Count -eq 0) { [void]$r.Add((New-KResult 'Defender exclusions (exact paths)' 'PASS' ([string]$count + ' entries') 'Defender')) }
-            else { [void]$r.Add((New-KResult 'Defender exclusions (exact paths)' 'FAIL' ([string]$missing.Count + ' missing') 'Defender')) }
-        } catch { [void]$r.Add((New-KResult 'Defender exclusions' 'NA' 'Defender not available (another antivirus?)' 'Defender')) }
+            $rows = @(Get-PcDefenderState $Cfg)
+            $offered = @($rows | Where-Object { $_.State -ne 'Protected' })
+            $names = ''
+            if ($offered.Count -eq 0) { [void]$r.Add((New-KResult 'Defender process exclusions' 'NA' 'no game or controller program found to offer' 'Defender')) }
+            else {
+                $missing = @(); $pending = @(); $changed = @(); $okCount = 0
+                foreach ($row in $offered) {
+                    $p = [string]$row.Candidate.Path
+                    $present = (@($mp.ExclusionProcess | Where-Object { [string]$_ -ieq $p }).Count -gt 0)
+                    if ($row.State -eq 'Approved') { if ($present) { $okCount++ } else { $missing += $row.Candidate.Name } }
+                    elseif ($row.State -eq 'ChangedSinceApproval') { $changed += $row.Candidate.Name }
+                    else { $pending += $row.Candidate.Name }
+                }
+                if ($missing.Count -gt 0) { [void]$r.Add((New-KResult 'Defender process exclusions' 'FAIL' ('approved but not in Defender: ' + ($missing -join ', ')) 'Defender')) }
+                elseif ($changed.Count -gt 0) { [void]$r.Add((New-KResult 'Defender process exclusions' 'WARN' ('file changed since approval, approve again: ' + ($changed -join ', ')) 'Defender')) }
+                elseif ($pending.Count -gt 0) { [void]$r.Add((New-KResult 'Defender process exclusions' 'WARN' ([string]$okCount + ' active; waiting for your approval: ' + ($pending -join ', ')) 'Defender')) }
+                else { [void]$r.Add((New-KResult 'Defender process exclusions' 'PASS' ([string]$okCount + ' program(s), checked in Defender') 'Defender')) }
+            }
+            foreach ($row in @($rows | Where-Object { $_.State -eq 'Protected' })) {
+                [void]$r.Add((New-KResult ($row.Candidate.Name + ' stays protected by Defender') 'INFO' 'not excluded unless you approve it' 'Defender'))
+            }
+        } catch { [void]$r.Add((New-KResult 'Defender process exclusions' 'NA' 'Defender not available (another antivirus?)' 'Defender')) }
     }
 
     # tasks
@@ -957,8 +1134,16 @@ function Invoke-PcOptimize {
     Write-PcStep 'Disk + hibernate'
     try { Invoke-PcDisk } catch { [void]$problems.Add('disk: ' + $_.Exception.Message) }
 
-    Write-PcStep 'Defender exclusions (exact paths)'
-    if ($Cfg.DefenderExclusions) { if (-not (Invoke-PcDefender)) { [void]$problems.Add('Defender not available') } }
+    Write-PcStep 'Defender process exclusions (approved programs only)'
+    if ($Cfg.DefenderExclusions) {
+        try {
+            if (-not (Invoke-PcDefender $Cfg -Reapply:$Reapply)) {
+                $pm = [string]$script:PcDefenderProblem
+                if (-not $pm) { $pm = 'Defender exclusions' }
+                [void]$problems.Add($pm)
+            }
+        } catch { [void]$problems.Add('Defender: ' + $_.Exception.Message) }
+    }
     else { Write-Say '  skipped (config)' 'DarkGray' }
 
     Write-PcStep 'NVIDIA power for Call of Duty'
@@ -983,6 +1168,7 @@ function Invoke-PcUndo {
     param([string]$Group = '')
     if ($Group) { Write-Head ('Undo PC optimizer - only the group "' + $Group + '"') } else { Write-Head 'Undo PC optimizer' }
     $res = Invoke-KRevert 'pc' -Group $Group
+    if (-not $Group -and $res.Ok) { Remove-Item -LiteralPath (Get-PcApprovalFile) -Force -ErrorAction SilentlyContinue }   # approvals end with the exclusions
     if ($res.Total -eq 0) { return $res }
     Write-Say ('  restored {0} of {1} recorded changes' -f $res.Restored, $res.Total) 'Green'
     if ($res.Drift.Count -gt 0) {
