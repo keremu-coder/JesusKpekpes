@@ -87,7 +87,7 @@ There is one profile: maximum. Each group can be switched off in `C:\ProgramData
 - **Xbox apps and Game Bar removed** (kept on dual-CCD X3D chips), the ms-gamebar prompt silenced, Copilot / widgets / suggestions off. (Toast notifications off is opt-in: `DisableToastNotifications`, because it can hide Windows Security alerts.)
 - **Memory integrity / VBS / hypervisor off: opt-in only** (`HvciOff`, default false). Back up your BitLocker recovery key before turning it on.
 - **Game process:** High CPU and I/O priority entries for the game and DS4Windows, high-performance GPU preference, fullscreen optimizations off.
-- **Defender exclusions for exact paths** (the game, Battle.net, DS4Windows). Not bare file names.
+- **Defender process exclusions you approve** (the game, DS4Windows): full program paths, never folders. A process exclusion makes Defender skip scanning files that program touches, and it stays until removed. Battle.net stays protected. Each add is checked in Defender; Undo removes only what this tool added.
 - **Logon re-apply:** re-applies the PC tweaks at every logon, since Windows updates can undo them.
   Create an empty file named `PAUSE` in `C:\ProgramData\KpekpesCODCustom` to skip it. By default it leaves your mouse / visual / input choices alone (`ReapplyUserPreferences`: false).
 

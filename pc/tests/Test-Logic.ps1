@@ -374,7 +374,141 @@ $script:Quiet = $false
 Assert-That 'a later full undo finishes the rest' ($g2.Ok -and $g2.Restored -eq 1 -and -not (Test-Path -LiteralPath $gc))
 Assert-That 'reg entries record what was written (drift check)' ((Get-Command Set-KReg).ScriptBlock.ToString() -match 'Wrote = ' -and (Get-Command Restore-RegEntry).ScriptBlock.ToString() -match 'Test-KRegDrift')
 Assert-That 'Protect-KDir takes ownership before setting permissions' ((Get-Command Protect-KDir).ScriptBlock.ToString() -match "/setowner '\*S-1-5-32-544'")
-Assert-That 'Defender exclusions go through the elevation-safety check' ((Get-Command Get-PcDefenderWanted).ScriptBlock.ToString() -match 'Test-KPathSafeForElevation')
+Assert-That 'Defender step records the elevation-safety result for every program' ((Get-Command Get-PcExeFacts).ScriptBlock.ToString() -match 'Test-KPathSafeForElevation')
+Assert-That 'Defender step never adds folder exclusions' ((Get-Command Invoke-PcDefender).ScriptBlock.ToString() -notmatch '-ExclusionPath')
+
+Assert-That 'Modern Warfare II program name (cod22-cod.exe) is a known game program' ($script:CodExeNames -contains 'cod22-cod.exe')
+Write-Host 'Defender process exclusions (all mocked, real Defender is never touched)'
+$dd = Join-Path $tmp 'defgames'
+New-Item -ItemType Directory -Path $dd -Force | Out-Null
+$codExe = Join-Path $dd 'cod.exe'; $ds4Exe = Join-Path $dd 'DS4Windows.exe'; $bnExe = Join-Path $dd 'Battle.net.exe'
+$mw2Exe = Join-Path $dd 'cod23.exe'
+foreach ($f in @($codExe, $ds4Exe, $bnExe, $mw2Exe)) { Set-Content -LiteralPath $f -Value ('x' + $f) -Encoding ASCII }
+$script:MockSig = @{}          # path -> @{ Status; Subject }
+$script:MockSafe = $true
+$script:MockEx = New-Object System.Collections.Generic.List[string]
+$script:MockMpDown = $false
+$script:MockMpRejects = $false  # Add-MpPreference "succeeds" but Defender (tamper protection) keeps the list unchanged
+$script:MockAddThrows = $false
+$script:MockAnswer = $true
+$script:MockAsked = 0
+function Get-AuthenticodeSignature { [CmdletBinding()] param([string]$LiteralPath) $m = $script:MockSig[$LiteralPath]; if (-not $m) { return [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null } }; return [pscustomobject]@{ Status = $m.Status; SignerCertificate = [pscustomobject]@{ Subject = $m.Subject } } }
+function Test-KPathSafeForElevation { param([string]$Path) if ($script:MockSafe) { return [pscustomobject]@{ Safe = $true; Reason = '' } } return [pscustomobject]@{ Safe = $false; Reason = 'owned by someone: ' + $Path } }
+function Get-MpPreference { [CmdletBinding()] param() if ($script:MockMpDown) { throw 'Defender service unavailable' }; return [pscustomobject]@{ ExclusionProcess = @($script:MockEx); ExclusionPath = @('C:\UserOwnFolder') } }
+function Add-MpPreference { [CmdletBinding()] param([string]$ExclusionProcess, [string]$ExclusionPath) if ($ExclusionPath) { throw 'folder exclusion must never be requested' }; if ($script:MockAddThrows) { throw 'Add-MpPreference: access denied (policy)' }; if (-not $script:MockMpRejects) { [void]$script:MockEx.Add($ExclusionProcess) } }
+function Remove-MpPreference { [CmdletBinding()] param([string]$ExclusionProcess, [string]$ExclusionPath) [void]$script:MockEx.Remove($ExclusionProcess) }
+function Get-CodExePaths { return @($codExe, $mw2Exe) }
+function Get-CodInstallRoots { return @() }
+function Get-BattleNetRoots { return @($dd) }
+function Find-DS4Windows { return $ds4Exe }
+function Read-PcYesNo { param([string]$Question) $script:MockAsked++; return $script:MockAnswer }
+$script:MockSig[$codExe] = @{ Status = 'Valid'; Subject = 'CN="Activision Publishing, Inc.", O=Activision' }
+$script:MockSig[$mw2Exe] = @{ Status = 'Valid'; Subject = 'CN="Activision Publishing, Inc.", O=Activision' }
+$script:MockSig[$bnExe] = @{ Status = 'Valid'; Subject = 'CN=Blizzard Entertainment, Inc.' }
+$dcfg = Get-KDefaultConfig
+$script:Silent = $false; $script:Quiet = $true; $script:WhatIfMode = $false
+Open-KJournal 'defender'
+
+# detection
+$cands = @(Get-PcDefenderCandidates $dcfg)
+Assert-That 'COD, MW2 and DS4Windows are detected from real files' (@($cands | Where-Object { $_.Name -match 'cod.exe|cod23.exe|DS4Windows' }).Count -eq 3)
+Assert-That 'Battle.net is found but PROTECTED by default' (@($cands | Where-Object { $_.Name -eq 'Battle.net' -and $_.Policy -eq 'Protected' }).Count -eq 1)
+$dcfg2 = Get-KDefaultConfig; $dcfg2.DefenderOfferBattleNet = $true
+Assert-That 'Battle.net is only offered when the config opts in' (@(Get-PcDefenderCandidates $dcfg2 | Where-Object { $_.Name -eq 'Battle.net' -and $_.Policy -eq 'Offer' }).Count -eq 1)
+$ft = Get-PcExeFacts (Join-Path $dd 'missing.exe')
+Assert-That 'a missing executable is rejected with a reason' ((-not $ft.Exists) -and $ft.WhyNot)
+$bad = Join-Path $dd 'notes.txt'; Set-Content -LiteralPath $bad -Value 'x'
+Assert-That 'a path that is not an .exe is rejected' (-not (Get-PcExeFacts $bad).Exists)
+$fc = Get-PcExeFacts $codExe
+Assert-That 'publisher and SHA-256 are recorded' ((Get-PcPublisherName $fc.Signer) -eq 'Activision Publishing, Inc.' -and $fc.Sha256.Length -eq 64)
+Assert-That 'signed + admin-only = Low risk' ((Get-PcExclusionRisk $fc) -eq 'Low')
+$script:MockSafe = $false
+Assert-That 'signed but user-writable = Medium risk' ((Get-PcExclusionRisk (Get-PcExeFacts $codExe)) -eq 'Medium')
+Assert-That 'unsigned = High risk (DS4Windows)' ((Get-PcExclusionRisk (Get-PcExeFacts $ds4Exe)) -eq 'High')
+$script:MockSig[$codExe] = @{ Status = 'HashMismatch'; Subject = 'CN=Activision Publishing, Inc.' }
+Assert-That 'an invalid signature is High risk' ((Get-PcExclusionRisk (Get-PcExeFacts $codExe)) -eq 'High')
+$script:MockSig[$codExe] = @{ Status = 'Valid'; Subject = 'CN="Activision Publishing, Inc.", O=Activision' }
+$script:MockSafe = $true
+
+# silent run: never approves, never adds
+$script:MockEx.Clear(); $script:MockEx.Add('C:\Users\me\mine.exe')
+$script:Silent = $true
+$r0 = Invoke-PcDefender $dcfg
+Assert-That 'a silent run adds nothing and asks nothing' ($r0 -and $script:MockEx.Count -eq 1 -and $script:MockAsked -eq 0)
+Assert-That 'a silent run leaves no approval file' (-not (Test-Path -LiteralPath (Get-PcApprovalFile)))
+$st = @(Get-PcDefenderState $dcfg)
+Assert-That 'unapproved programs show as NotApproved, Battle.net as Protected' ((@($st | Where-Object { $_.State -eq 'NotApproved' }).Count -eq 3) -and (@($st | Where-Object { $_.State -eq 'Protected' }).Count -eq 1))
+
+# says no
+$script:Silent = $false; $script:MockAnswer = $false
+$r1 = Invoke-PcDefender $dcfg
+Assert-That 'saying no adds nothing and keeps no approval' ($r1 -and $script:MockEx.Count -eq 1 -and -not (Test-Path -LiteralPath (Get-PcApprovalFile)))
+Assert-That 'Battle.net was never asked about' ($script:MockAsked -eq 3)
+
+# says yes
+$script:MockAnswer = $true; $script:MockAsked = 0
+$r2 = Invoke-PcDefender $dcfg
+Assert-That 'approved programs are excluded as PROCESS entries and checked' ($r2 -and $script:MockEx -contains $codExe -and $script:MockEx -contains $ds4Exe -and $script:MockEx -contains $mw2Exe)
+Assert-That 'Battle.net was not excluded' (-not ($script:MockEx -contains $bnExe))
+Assert-That 'the unrelated user exclusion is still there' ($script:MockEx -contains 'C:\Users\me\mine.exe')
+Assert-That 'approvals are saved with publisher or hash' ((@(Read-PcApprovals).Count -eq 3) -and (@(Read-PcApprovals | Where-Object { $_.Path -eq $ds4Exe -and $_.Sha256 -and -not $_.Signer }).Count -eq 1))
+
+# repeated runs and logon re-apply
+$n = $script:MockEx.Count; $script:MockAsked = 0
+$r3 = Invoke-PcDefender $dcfg
+Assert-That 'running again adds no duplicates and asks nothing' ($r3 -and $script:MockEx.Count -eq $n -and $script:MockAsked -eq 0)
+$script:MockEx.Remove($codExe) | Out-Null   # simulate a restart that lost it
+$script:Silent = $true
+$r4 = Invoke-PcDefender $dcfg -Reapply
+Assert-That 'the logon re-apply restores an approved exclusion without asking' ($r4 -and $script:MockEx -contains $codExe -and $script:MockAsked -eq 0)
+
+# a changed file needs a new approval
+Set-Content -LiteralPath $ds4Exe -Value 'replaced by something else' -Encoding ASCII
+$script:MockEx.Remove($ds4Exe) | Out-Null
+$r5 = Invoke-PcDefender $dcfg -Reapply
+Assert-That 'a changed unsigned file is NOT re-excluded' (-not ($script:MockEx -contains $ds4Exe))
+Assert-That 'the state says ChangedSinceApproval' (@(Get-PcDefenderState $dcfg | Where-Object { $_.Candidate.Name -eq 'DS4Windows' -and $_.State -eq 'ChangedSinceApproval' }).Count -eq 1)
+$script:MockSig[$mw2Exe] = @{ Status = 'Valid'; Subject = 'CN=Somebody Else' }
+$script:MockEx.Remove($mw2Exe) | Out-Null
+[void](Invoke-PcDefender $dcfg -Reapply)
+Assert-That 'a signed file with a different publisher is NOT re-excluded' (-not ($script:MockEx -contains $mw2Exe))
+$script:MockSig[$mw2Exe] = @{ Status = 'Valid'; Subject = 'CN="Activision Publishing, Inc.", O=Activision' }
+
+# failures are reported, not hidden
+$script:Silent = $false; $script:MockAnswer = $true
+$null = Remove-Item -LiteralPath (Get-PcApprovalFile) -Force
+$script:MockEx.Clear(); $script:MockMpRejects = $true
+Set-Content -LiteralPath $ds4Exe -Value 'xDS4' -Encoding ASCII
+$r6 = Invoke-PcDefender $dcfg
+Assert-That 'Defender silently ignoring the add is reported as a failure' ((-not $r6) -and $script:PcDefenderProblem -match 'refused')
+$script:MockMpRejects = $false; $script:MockAddThrows = $true
+$r7 = Invoke-PcDefender $dcfg
+Assert-That 'a policy error from Add-MpPreference is reported as a failure' ((-not $r7) -and $script:PcDefenderProblem -match 'refused')
+$script:MockAddThrows = $false; $script:MockMpDown = $true
+$script:MockAsked = 0
+$r8 = Invoke-PcDefender $dcfg
+Assert-That 'Defender unavailable: nothing is asked or changed, problem named' ((-not $r8) -and $script:MockAsked -eq 0 -and $script:PcDefenderProblem -match 'not available')
+$script:MockMpDown = $false
+
+# WhatIf
+$script:WhatIfMode = $true; $script:MockEx.Clear(); $script:MockAsked = 0
+$r9 = Invoke-PcDefender $dcfg
+$script:WhatIfMode = $false
+Assert-That 'What-will-change mode changes and asks nothing' ($r9 -and $script:MockEx.Count -eq 0 -and $script:MockAsked -eq 0)
+
+# rollback removes only what we journaled
+$script:MockEx.Clear(); $script:MockEx.Add('C:\Users\me\mine.exe'); $script:MockEx.Add($ds4Exe)   # DS4 already excluded by the user
+$null = Remove-Item -LiteralPath (Get-PcApprovalFile) -Force -ErrorAction SilentlyContinue
+Open-KJournal 'defundo'
+$r10 = Invoke-PcDefender $dcfg
+Assert-That 'an exclusion the user already had is not journaled' (@($script:J.Entries | Where-Object { $_.Value -eq $ds4Exe }).Count -eq 0 -and @($script:J.Entries | Where-Object { $_.Value -eq $codExe }).Count -eq 1)
+$undo = Invoke-KRevert 'defundo'
+Assert-That 'undo removes the ones we added' ($undo.Ok -and -not ($script:MockEx -contains $codExe) -and -not ($script:MockEx -contains $mw2Exe))
+Assert-That 'undo keeps the user exclusions' (($script:MockEx -contains 'C:\Users\me\mine.exe') -and ($script:MockEx -contains $ds4Exe))
+Assert-That 'the user folder exclusion was never touched' ((Get-MpPreference).ExclusionPath -contains 'C:\UserOwnFolder')
+foreach ($fn in @('Get-AuthenticodeSignature', 'Test-KPathSafeForElevation', 'Get-MpPreference', 'Add-MpPreference', 'Remove-MpPreference', 'Get-CodExePaths', 'Get-CodInstallRoots', 'Get-BattleNetRoots', 'Find-DS4Windows', 'Read-PcYesNo')) { Remove-Item -LiteralPath ('Function:\' + $fn) -ErrorAction SilentlyContinue }
+. (Join-Path $repo 'lib\Safety.ps1'); . (Join-Path $repo 'modules\Pc.ps1'); . (Join-Path $repo 'modules\Controller.ps1')
+$script:Quiet = $false
 
 Write-Host 'NVIDIA power undo choice'
 Assert-That 'undo kind: profile we created is deleted' ((Get-NvidiaUndoKind $true $false) -eq 'delete-profile')
