@@ -47,7 +47,8 @@ function Get-KDefaultConfig {
     # Every switch defaults to your build (maximum). Flip one to $false in config.json to skip that group.
     $c = [ordered]@{
         GameProcessTweaks  = $true   # CPU/IO priority entries, GPU preference, QoS for cod.exe
-        DefenderExclusions = $true   # exact-path exclusions for the game, Battle.net, DS4Windows
+        DefenderExclusions = $true   # process exclusions for programs you approve: the game, DS4Windows (asked once, never silent)
+        DefenderOfferBattleNet = $false   # Battle.net stays protected; $true only makes it ask you
         WindowsUpdateBlock = $true   # no driver updates via Windows Update, no auto-reboot, no Store auto-download
         RemoveXboxApps     = $true   # Game Bar and every Xbox app and service (not needed for Battle.net + DS4Windows; set $false for Store / Game Pass games)
         DisableServices    = $true   # SysMain, DiagTrack, WSearch and friends
