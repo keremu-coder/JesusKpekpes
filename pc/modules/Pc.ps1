@@ -3,7 +3,7 @@
 # One table (Get-PcRegTweaks) drives both Apply and Verify, so the two can never disagree.
 # Every change goes through the journal first (lib\Journal.ps1), so Undo can restore it exactly.
 
-$script:CodExeNames = @('cod.exe', 'cod24.exe', 'cod23.exe', 'ModernWarfare.exe')
+$script:CodExeNames = @('cod.exe', 'cod22-cod.exe', 'cod24.exe', 'cod23.exe', 'ModernWarfare.exe')
 $script:PcPlanName  = 'Kpekpes COD Custom Max'
 $script:QosName     = 'Kpekpes COD Custom'
 $script:TaskReapply = 'Kpekpes PC Reapply'

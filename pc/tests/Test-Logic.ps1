@@ -377,6 +377,7 @@ Assert-That 'Protect-KDir takes ownership before setting permissions' ((Get-Comm
 Assert-That 'Defender step records the elevation-safety result for every program' ((Get-Command Get-PcExeFacts).ScriptBlock.ToString() -match 'Test-KPathSafeForElevation')
 Assert-That 'Defender step never adds folder exclusions' ((Get-Command Invoke-PcDefender).ScriptBlock.ToString() -notmatch '-ExclusionPath')
 
+Assert-That 'Modern Warfare II program name (cod22-cod.exe) is a known game program' ($script:CodExeNames -contains 'cod22-cod.exe')
 Write-Host 'Defender process exclusions (all mocked, real Defender is never touched)'
 $dd = Join-Path $tmp 'defgames'
 New-Item -ItemType Directory -Path $dd -Force | Out-Null
