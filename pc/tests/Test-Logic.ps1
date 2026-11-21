@@ -409,7 +409,7 @@ $script:Silent = $false; $script:Quiet = $true; $script:WhatIfMode = $false
 Open-KJournal 'defender'
 
 # detection
-try { $cands = @(Get-PcDefenderCandidates $dcfg) } catch { Write-Host ('DEBUG ' + $_.Exception.GetType().FullName + ' ' + $_.Exception.Message); Write-Host $_.ScriptStackTrace; throw }
+$cands = @(Get-PcDefenderCandidates $dcfg)
 Assert-That 'COD, MW2 and DS4Windows are detected from real files' (@($cands | Where-Object { $_.Name -match 'cod.exe|cod23.exe|DS4Windows' }).Count -eq 3)
 Assert-That 'Battle.net is found but PROTECTED by default' (@($cands | Where-Object { $_.Name -eq 'Battle.net' -and $_.Policy -eq 'Protected' }).Count -eq 1)
 $dcfg2 = Get-KDefaultConfig; $dcfg2.DefenderOfferBattleNet = $true
