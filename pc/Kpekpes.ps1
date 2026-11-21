@@ -15,12 +15,16 @@
     .\Kpekpes.ps1 -Action Optimize -Module PC -WhatIf   what will change, nothing is written
     .\Kpekpes.ps1 -Action Compare -Before a.csv -After b.csv
     .\Kpekpes.ps1 -Action Hitch
+
+  -AskViaStdin is for the Windows app, which has no console to type in. A question is sent out as a line
+  that starts with @@ASK@@, and the app writes y or n back on standard input.
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('Menu', 'Optimize', 'Verify', 'Undo', 'Compare', 'Hitch', 'Display', 'Startup', 'StartupOff', 'Measure', 'GameBarQuiet')][string]$Action = 'Menu',
     [ValidateSet('PC', 'Controller', 'Both')][string]$Module = 'Both',
     [switch]$Silent,
+    [switch]$AskViaStdin,
     [switch]$Reapply,
     [switch]$WhatIf,
     [switch]$Detailed,
@@ -52,6 +56,20 @@ $root = $PSScriptRoot
 $script:WhatIfMode = [bool]$WhatIf
 $script:Quiet = $false
 $script:Silent = [bool]$Silent
+$script:AskViaStdin = [bool]$AskViaStdin
+
+if ($script:AskViaStdin) {
+    # Run from the Windows app there is no console, so Read-Host would wait for ever on the Defender question.
+    # This replaces the question for this run only: the app reads the marker line, asks on its own screen,
+    # and writes y or n back. No answer (the app closed, or the pipe ended) counts as no.
+    function Read-PcYesNo {
+        param([string]$Question)
+        Write-Say ('@@ASK@@' + $Question) 'DarkGray'
+        $answer = ''
+        try { $answer = [Console]::In.ReadLine() } catch { $answer = '' }
+        return (([string]$answer).Trim() -match '^(y|yes)$')
+    }
+}
 
 function Show-Banner {
     Clear-Host
