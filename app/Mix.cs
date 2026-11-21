@@ -48,6 +48,8 @@ static class Mix
         {
             Write(text, n, "C", filters.Where(f => f.Channels == "C"));
             Write(text, n, "L R", filters.Where(f => f.Channels == "L R"));
+            // Drop and Well keep one shared set for beside and behind. Nova has a set for each.
+            Write(text, n, "SL SR RL RR", filters.Where(f => f.Channels == "SL SR RL RR"));
             Write(text, n, "SL SR", filters.Where(f => f.Channels == "SL SR"));
             Write(text, n, "RL RR", filters.Where(f => f.Channels == "RL RR"));
             text.Append("Channel: LFE\r\n");
@@ -157,8 +159,9 @@ static class Mix
         }
 
         var front = filters.Where(f => f.Channels == "L R").ToArray();
-        var side = filters.Where(f => f.Channels == "SL SR").ToArray();
-        var rear = filters.Where(f => f.Channels == "RL RR").ToArray();
+        // Drop and Well share one set for beside and behind. Nova has its own set for each.
+        var side = filters.Where(f => f.Channels == "SL SR" || f.Channels == "SL SR RL RR").ToArray();
+        var rear = filters.Where(f => f.Channels == "RL RR" || f.Channels == "SL SR RL RR").ToArray();
         var centerBands = filters.Where(f => f.Channels == "C").ToArray();
         var frontL = Chain(front, sr);
         var frontR = Chain(front, sr);
