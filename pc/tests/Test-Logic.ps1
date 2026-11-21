@@ -391,7 +391,7 @@ $script:MockMpRejects = $false  # Add-MpPreference "succeeds" but Defender (tamp
 $script:MockAddThrows = $false
 $script:MockAnswer = $true
 $script:MockAsked = 0
-function Get-AuthenticodeSignature { param([string]$LiteralPath) $m = $script:MockSig[$LiteralPath]; if (-not $m) { return [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null } }; return [pscustomobject]@{ Status = $m.Status; SignerCertificate = [pscustomobject]@{ Subject = $m.Subject } } }
+function Get-AuthenticodeSignature { [CmdletBinding()] param([string]$LiteralPath) $m = $script:MockSig[$LiteralPath]; if (-not $m) { return [pscustomobject]@{ Status = 'NotSigned'; SignerCertificate = $null } }; return [pscustomobject]@{ Status = $m.Status; SignerCertificate = [pscustomobject]@{ Subject = $m.Subject } } }
 function Test-KPathSafeForElevation { param([string]$Path) if ($script:MockSafe) { return [pscustomobject]@{ Safe = $true; Reason = '' } } return [pscustomobject]@{ Safe = $false; Reason = 'owned by someone: ' + $Path } }
 function Get-MpPreference { [CmdletBinding()] param() if ($script:MockMpDown) { throw 'Defender service unavailable' }; return [pscustomobject]@{ ExclusionProcess = @($script:MockEx); ExclusionPath = @('C:\UserOwnFolder') } }
 function Add-MpPreference { [CmdletBinding()] param([string]$ExclusionProcess, [string]$ExclusionPath) if ($ExclusionPath) { throw 'folder exclusion must never be requested' }; if ($script:MockAddThrows) { throw 'Add-MpPreference: access denied (policy)' }; if (-not $script:MockMpRejects) { [void]$script:MockEx.Add($ExclusionProcess) } }
@@ -409,7 +409,7 @@ $script:Silent = $false; $script:Quiet = $true; $script:WhatIfMode = $false
 Open-KJournal 'defender'
 
 # detection
-$cands = @(Get-PcDefenderCandidates $dcfg)
+try { $cands = @(Get-PcDefenderCandidates $dcfg) } catch { Write-Host ('DEBUG ' + $_.Exception.GetType().FullName + ' ' + $_.Exception.Message); Write-Host $_.ScriptStackTrace; throw }
 Assert-That 'COD, MW2 and DS4Windows are detected from real files' (@($cands | Where-Object { $_.Name -match 'cod.exe|cod23.exe|DS4Windows' }).Count -eq 3)
 Assert-That 'Battle.net is found but PROTECTED by default' (@($cands | Where-Object { $_.Name -eq 'Battle.net' -and $_.Policy -eq 'Protected' }).Count -eq 1)
 $dcfg2 = Get-KDefaultConfig; $dcfg2.DefenderOfferBattleNet = $true
