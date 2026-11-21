@@ -39,7 +39,7 @@
   <LSDeadZone>0</LSDeadZone>
   <RSDeadZone>0</RSDeadZone>
   <LSAntiDeadZone>24</LSAntiDeadZone>
-  <RSAntiDeadZone>8</RSAntiDeadZone>
+  <RSAntiDeadZone>0</RSAntiDeadZone>
   <LSMaxZone>58</LSMaxZone>
   <RSMaxZone>57</RSMaxZone>
   <LSVerticalScale>150</LSVerticalScale>
@@ -178,7 +178,7 @@
   <LSOutputCurveMode>custom</LSOutputCurveMode>
   <LSOutputCurveCustom>0.000, 0.550, 0.850, 0.960, 1.000</LSOutputCurveCustom>
   <RSOutputCurveMode>custom</RSOutputCurveMode>
-  <RSOutputCurveCustom>0.00000, 0.05300, 0.11200, 0.17400, 0.23700, 0.30200, 0.37000, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000</RSOutputCurveCustom>
+  <RSOutputCurveCustom>0.00000, 0.06285, 0.12899, 0.19445, 0.25675, 0.31686, 0.37556, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000</RSOutputCurveCustom>
   <LSSquareStick>True</LSSquareStick>
   <RSSquareStick>False</RSSquareStick>
   <SquareStickRoundness>200</SquareStickRoundness>
@@ -186,9 +186,9 @@
   <LSAntiSnapback>False</LSAntiSnapback>
   <RSAntiSnapback>True</RSAntiSnapback>
   <LSAntiSnapbackDelta>160</LSAntiSnapbackDelta>
-  <RSAntiSnapbackDelta>180</RSAntiSnapbackDelta>
+  <RSAntiSnapbackDelta>240</RSAntiSnapbackDelta>
   <LSAntiSnapbackTimeout>40</LSAntiSnapbackTimeout>
-  <RSAntiSnapbackTimeout>12</RSAntiSnapbackTimeout>
+  <RSAntiSnapbackTimeout>6</RSAntiSnapbackTimeout>
   <LSOutputMode>Controls</LSOutputMode>
   <RSOutputMode>Controls</RSOutputMode>
   <LSOutputSettings>

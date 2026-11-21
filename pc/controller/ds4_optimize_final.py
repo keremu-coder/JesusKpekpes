@@ -203,11 +203,17 @@ def tuned_was_edited(out):
         return True   # no record of writing it -> treat it as the user's file
 
 # The aim fix. Deadzone is never raised.
+# Anti-deadzone 8 turned every tiny correction into an 8% jump (the micro overshoot).
+# It stays 0, so a small move starts at nothing and grows with the stick.
+# The first part of the curve is a little quicker than before, and from there
+# it is the same curve, so flicks feel the same and a headshot correction can be smaller.
+# Anti-snapback only catches a violent spring-back, not a tracking correction.
 AIM = (
     ("RSAntiSnapback", "True"),
-    ("RSAntiSnapbackDelta", "180"),
-    ("RSAntiSnapbackTimeout", "12"),
-    ("RSAntiDeadZone", "8"),
+    ("RSAntiSnapbackDelta", "240"),
+    ("RSAntiSnapbackTimeout", "6"),
+    ("RSAntiDeadZone", "0"),
+    ("RSOutputCurveCustom", "0.00000, 0.06285, 0.12899, 0.19445, 0.25675, 0.31686, 0.37556, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000"),
     ("L2MaxZone", "8"),
     ("R2MaxZone", "8"),
     ("L2OutputCurveMode", "linear"),
@@ -215,11 +221,13 @@ AIM = (
 )
 
 def apply_aim(root, skip=()):
-    """Stop the crosshair walking off a shot, and make ADS/fire reach full sooner.
+    """Keep a micro correction on the stick, and make ADS/fire reach full sooner.
 
-    Deadzone is never raised. Anti-snapback only eats the fast spring-back after a flick,
-    for 12 ms, so a real correction is not held. Anti-deadzone is lowered so a hair of
-    stick drift is not turned into a kick. The trigger reaches full at 8% of the pull.
+    Deadzone is never raised. Right-stick anti-deadzone stays 0 so a hair of
+    movement is not thrown past the head. Only the start of the stick curve is
+    a little quicker; the rest of the curve is unchanged. Anti-snapback ignores
+    anything but a hard spring, so tracking is not held. The trigger reaches
+    full at 8% of the pull.
     A setting the person passed on the command line (listed in skip) is left as they asked.
     """
     n = 0
