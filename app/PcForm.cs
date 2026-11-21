@@ -2,6 +2,9 @@ namespace JesusKpekpes;
 
 sealed class PcForm : Form
 {
+    // The script sends a question as a line that contains this marker. The window answers it and writes y or n back.
+    const string AskMark = "@@ASK@@";
+
     readonly TextBox _out = new();
     readonly Label _status = new();
     readonly ProgressBar _bar = new();
@@ -49,7 +52,7 @@ sealed class PcForm : Form
 
         var y = 44;
         Add("What will change", 16, y, () => _ = Go("-Action Optimize -Module Both -WhatIf", "Checking what would change", (t, _) => PlainPreview() + "\r\n\r\n" + PcReport.Normalize(t)));
-        Add("Optimize PC and controller", 210, y, () => _ = Go("-Action Optimize -Module Both", "Optimizing your PC and controller", (t, code) => PcReport.Optimized(t, code), 900000, true), 210);
+        Add("Optimize PC and controller", 210, y, () => _ = Go("-Action Optimize -Module Both -AskViaStdin", "Optimizing your PC and controller", (t, code) => PcReport.Optimized(t, code), 900000, true), 210);
         Add("Undo that", 440, y, () =>
         {
             if (MessageBox.Show(this, "Put the PC and controller changes back? Audio stays as it is.", "Undo", MessageBoxButtons.YesNo) == DialogResult.Yes)
@@ -157,7 +160,7 @@ sealed class PcForm : Form
                     _out.AppendText(line.TrimEnd() + "\r\n");
                 });
             }
-            var (text, code) = await Task.Run(() => Run(args, timeoutMs, Line));
+            var (text, code) = await Task.Run(() => Run(args, timeoutMs, Line, AskPerson));
             Show(wrap(text, code));
         }
         finally
@@ -166,12 +169,30 @@ sealed class PcForm : Form
         }
     }
 
-    static (string Text, int Code) Run(string args, int timeoutMs, Action<string> line)
+    // Called from the thread that reads the script's output. The question is shown on this window's thread and waits for the answer.
+    // The program is shown as the script printed it, so the person sees the path, the publisher and the risk before saying yes.
+    bool AskPerson(string shown, string question)
+    {
+        if (IsDisposed || !IsHandleCreated) return false;
+        try
+        {
+            return (bool)Invoke(new Func<bool>(() =>
+                MessageBox.Show(this, shown + "\r\n\r\n" + question, "Defender exclusion", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) == DialogResult.Yes));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    static (string Text, int Code) Run(string args, int timeoutMs, Action<string> line, Func<string, string, bool>? ask = null)
     {
         var script = Script();
         if (!File.Exists(script)) return ("The PC script was not found next to the program. Reinstall or unzip the whole folder.", 1);
         try
         {
+            // Only a run that asks to be answered gets a pipe for the answers. Every other run is started exactly as before.
+            var asking = ask is not null && args.Contains("-AskViaStdin", StringComparison.Ordinal);
             var start = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "powershell.exe",
@@ -179,17 +200,44 @@ sealed class PcForm : Form
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = asking,
                 CreateNoWindow = true,
                 WorkingDirectory = Path.GetDirectoryName(script)!,
             };
             using var process = System.Diagnostics.Process.Start(start);
             if (process is null) return ("Windows did not start PowerShell.", 1);
             var all = new System.Text.StringBuilder();
+            var recent = new Queue<string>();
             void Take(string? data)
             {
                 if (data is null) return;
+                var at = asking ? data.IndexOf(AskMark, StringComparison.Ordinal) : -1;
+                if (at >= 0)
+                {
+                    string shown;
+                    lock (recent) shown = string.Join("\r\n", recent);
+                    var yes = false;
+                    try { yes = ask!(shown, data[(at + AskMark.Length)..].Trim()); }
+                    catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
+                    try
+                    {
+                        process.StandardInput.WriteLine(yes ? "y" : "n");
+                        process.StandardInput.Flush();
+                    }
+                    catch (IOException) { }
+                    var answered = "  You answered: " + (yes ? "yes" : "no");
+                    lock (all) all.AppendLine(answered);
+                    line(answered);
+                    return;
+                }
                 lock (all) all.AppendLine(data);
                 line(data);
+                if (asking && !string.IsNullOrWhiteSpace(data))
+                    lock (recent)
+                    {
+                        recent.Enqueue(data.Trim());
+                        while (recent.Count > 5) recent.Dequeue();
+                    }
             }
             process.OutputDataReceived += (_, e) => Take(e.Data);
             process.ErrorDataReceived += (_, e) => Take(e.Data);
