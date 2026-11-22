@@ -27,9 +27,9 @@
   <TouchpadInvert>0</TouchpadInvert>
   <TouchpadClickPassthru>False</TouchpadClickPassthru>
   <L2AntiDeadZone>100</L2AntiDeadZone>
-  <R2AntiDeadZone>83</R2AntiDeadZone>
+  <R2AntiDeadZone>100</R2AntiDeadZone>
   <L2MaxZone>1</L2MaxZone>
-  <R2MaxZone>8</R2MaxZone>
+  <R2MaxZone>1</R2MaxZone>
   <L2MaxOutput>100</L2MaxOutput>
   <R2MaxOutput>100</R2MaxOutput>
   <ButtonMouseSensitivity>25</ButtonMouseSensitivity>
@@ -178,7 +178,7 @@
   <LSOutputCurveMode>custom</LSOutputCurveMode>
   <LSOutputCurveCustom>0.000, 0.550, 0.850, 0.960, 1.000</LSOutputCurveCustom>
   <RSOutputCurveMode>custom</RSOutputCurveMode>
-  <RSOutputCurveCustom>0.00000, 0.05970, 0.12120, 0.18144, 0.24418, 0.30740, 0.37202, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000</RSOutputCurveCustom>
+  <RSOutputCurveCustom>0.00000, 0.06450, 0.12120, 0.18144, 0.24418, 0.30740, 0.37202, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000</RSOutputCurveCustom>
   <LSSquareStick>True</LSSquareStick>
   <RSSquareStick>False</RSSquareStick>
   <SquareStickRoundness>200</SquareStickRoundness>
@@ -222,7 +222,7 @@
   <R2HipFireTime>0</R2HipFireTime>
   <L2TriggerEffect>None</L2TriggerEffect>
   <R2TriggerEffect>None</R2TriggerEffect>
-  <R2OutputCurveMode>linear</R2OutputCurveMode>
+  <R2OutputCurveMode>custom</R2OutputCurveMode>
   <R2OutputCurveCustom>0.00, 1.00, 0.00, 1.00</R2OutputCurveCustom>
   <SXOutputCurveMode>custom</SXOutputCurveMode>
   <SXOutputCurveCustom>0.00, 0.45, 0.35, 1.00</SXOutputCurveCustom>
