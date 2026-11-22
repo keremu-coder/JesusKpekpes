@@ -26,9 +26,9 @@
   <RightTriggerMiddle>0</RightTriggerMiddle>
   <TouchpadInvert>0</TouchpadInvert>
   <TouchpadClickPassthru>False</TouchpadClickPassthru>
-  <L2AntiDeadZone>83</L2AntiDeadZone>
+  <L2AntiDeadZone>100</L2AntiDeadZone>
   <R2AntiDeadZone>83</R2AntiDeadZone>
-  <L2MaxZone>8</L2MaxZone>
+  <L2MaxZone>1</L2MaxZone>
   <R2MaxZone>8</R2MaxZone>
   <L2MaxOutput>100</L2MaxOutput>
   <R2MaxOutput>100</R2MaxOutput>
@@ -178,7 +178,7 @@
   <LSOutputCurveMode>custom</LSOutputCurveMode>
   <LSOutputCurveCustom>0.000, 0.550, 0.850, 0.960, 1.000</LSOutputCurveCustom>
   <RSOutputCurveMode>custom</RSOutputCurveMode>
-  <RSOutputCurveCustom>0.00000, 0.06285, 0.12899, 0.19445, 0.25675, 0.31686, 0.37556, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000</RSOutputCurveCustom>
+  <RSOutputCurveCustom>0.00000, 0.05658, 0.11818, 0.18144, 0.24418, 0.30740, 0.37202, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000</RSOutputCurveCustom>
   <LSSquareStick>True</LSSquareStick>
   <RSSquareStick>False</RSSquareStick>
   <SquareStickRoundness>200</SquareStickRoundness>
@@ -214,7 +214,7 @@
       <HapticPowerLevel>7</HapticPowerLevel>
     </RumbleSettings>
   </DualSenseControllerSettings>
-  <L2OutputCurveMode>linear</L2OutputCurveMode>
+  <L2OutputCurveMode>custom</L2OutputCurveMode>
   <L2OutputCurveCustom>0.00, 1.00, 0.00, 1.00</L2OutputCurveCustom>
   <L2TwoStageMode>Disabled</L2TwoStageMode>
   <R2TwoStageMode>Disabled</R2TwoStageMode>

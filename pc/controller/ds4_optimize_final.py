@@ -203,31 +203,31 @@ def tuned_was_edited(out):
         return True   # no record of writing it -> treat it as the user's file
 
 # The aim fix. Deadzone is never raised.
-# Anti-deadzone 8 turned every tiny correction into an 8% jump (the micro overshoot).
-# It stays 0, so a small move starts at nothing and grows with the stick.
-# The first part of the curve is a little quicker than before, and from there
-# it is the same curve, so flicks feel the same and a headshot correction can be smaller.
+# The previous curve was hot enough at the start to carry the crosshair past the target.
+# This one is only a little quicker than the original in that first part, then identical,
+# and anti-deadzone stays 0 so nothing jumps.
+# ADS is a full press the moment L2 moves: the instant curve, no ramp.
 # Anti-snapback only catches a violent spring-back, not a tracking correction.
 AIM = (
     ("RSAntiSnapback", "True"),
     ("RSAntiSnapbackDelta", "240"),
     ("RSAntiSnapbackTimeout", "6"),
     ("RSAntiDeadZone", "0"),
-    ("RSOutputCurveCustom", "0.00000, 0.06285, 0.12899, 0.19445, 0.25675, 0.31686, 0.37556, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000"),
-    ("L2MaxZone", "8"),
+    ("RSOutputCurveCustom", "0.00000, 0.05658, 0.11818, 0.18144, 0.24418, 0.30740, 0.37202, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000"),
+    ("L2AntiDeadZone", "100"),
+    ("L2MaxZone", "1"),
+    ("L2OutputCurveMode", "custom"),
     ("R2MaxZone", "8"),
-    ("L2OutputCurveMode", "linear"),
     ("R2OutputCurveMode", "linear"),
 )
 
 def apply_aim(root, skip=()):
-    """Keep a micro correction on the stick, and make ADS/fire reach full sooner.
+    """A little more stick response without sailing past the target, and instant ADS.
 
-    Deadzone is never raised. Right-stick anti-deadzone stays 0 so a hair of
-    movement is not thrown past the head. Only the start of the stick curve is
-    a little quicker; the rest of the curve is unchanged. Anti-snapback ignores
-    anything but a hard spring, so tracking is not held. The trigger reaches
-    full at 8% of the pull.
+    Deadzone is never raised. Right-stick anti-deadzone stays 0. The start of
+    the stick curve is only slightly quicker than the original, then the same,
+    so a correction does not carry past the head. L2 is a full press as soon
+    as it moves. Anti-snapback ignores anything but a hard spring.
     A setting the person passed on the command line (listed in skip) is left as they asked.
     """
     n = 0
