@@ -105,6 +105,14 @@ function New-RT {
     return [pscustomobject]@{ Group = $Group; Label = $Label; Path = $Path; Name = $Name; Value = $Value; Kind = $Kind; Placebo = $Placebo; BestEffort = $BestEffort }
 }
 
+function Get-PcPresenceBlockPath { return (Join-Path (Join-Path $script:DataRoot 'pc') 'block-presence.vbs') }
+
+function Get-PcPresenceDebugger {
+    # Windows runs this instead of GameBarPresenceWriter.exe. The script exits and does not start the writer,
+    # so the writer never hooks the game. The ActivatableClassId switch above is locked on some builds.
+    return ('wscript.exe //B //Nologo "' + (Get-PcPresenceBlockPath) + '"')
+}
+
 function Get-PcRegTweaks {
     param($Cfg)
     $t = New-Object System.Collections.ArrayList
@@ -158,6 +166,9 @@ function Get-PcRegTweaks {
     if (Test-Path -LiteralPath $script:Presence) {
         Add-RT $g 'Game Bar presence writer off' $script:Presence 'Enabled' 0 'DWord' $false $true
     }
+    # The key above is owned by TrustedInstaller on current Windows, so the switch often cannot be written.
+    # This one can. It stops the writer from starting at all, which is the hook that feels like Game Bar lag.
+    Add-RT $g 'Game Bar presence writer cannot start' ($script:IfeoPath + '\GameBarPresenceWriter.exe') 'Debugger' (Get-PcPresenceDebugger) 'String'
 
     $g = 'Scheduling'
     Add-RT $g 'Timer resolution requests honored globally' 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel' 'GlobalTimerResolutionRequests' 1
@@ -260,6 +271,18 @@ function Get-PcRegTweaks {
 
 function Invoke-PcRegTweaks {
     param($Cfg, [switch]$Reapply)
+    if (-not $script:WhatIfMode) {
+        $vbs = Get-PcPresenceBlockPath
+        $dir = Split-Path -Path $vbs -Parent
+        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $body = "' The presence writer is not started. This file does nothing on purpose.`r`nWScript.Quit 0`r`n"
+        $have = ''
+        if (Test-Path -LiteralPath $vbs) { try { $have = [IO.File]::ReadAllText($vbs) } catch { $have = '' } }
+        if ($have -ne $body) {
+            [void](Add-KEntry ('file|' + $vbs) @{ Type = 'file'; Path = $vbs })
+            [IO.File]::WriteAllText($vbs, $body, (New-Object Text.UTF8Encoding($false)))
+        }
+    }
     $fail = 0
     foreach ($t in (Get-PcRegTweaks $Cfg)) {
         # The logon re-apply leaves your own mouse / visual / input choices alone unless you switch it on.

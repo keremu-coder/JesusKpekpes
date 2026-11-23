@@ -184,11 +184,11 @@
   <SquareStickRoundness>200</SquareStickRoundness>
   <SquareRStickRoundness>200</SquareRStickRoundness>
   <LSAntiSnapback>False</LSAntiSnapback>
-  <RSAntiSnapback>True</RSAntiSnapback>
+  <RSAntiSnapback>False</RSAntiSnapback>
   <LSAntiSnapbackDelta>160</LSAntiSnapbackDelta>
-  <RSAntiSnapbackDelta>240</RSAntiSnapbackDelta>
+  <RSAntiSnapbackDelta>256</RSAntiSnapbackDelta>
   <LSAntiSnapbackTimeout>40</LSAntiSnapbackTimeout>
-  <RSAntiSnapbackTimeout>6</RSAntiSnapbackTimeout>
+  <RSAntiSnapbackTimeout>0</RSAntiSnapbackTimeout>
   <LSOutputMode>Controls</LSOutputMode>
   <RSOutputMode>Controls</RSOutputMode>
   <LSOutputSettings>

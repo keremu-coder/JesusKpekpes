@@ -207,11 +207,12 @@ def tuned_was_edited(out):
 # This one is only a little quicker than the original in that first part, then identical,
 # and anti-deadzone stays 0 so nothing jumps.
 # ADS is a full press the moment L2 moves: the instant curve, no ramp.
-# Anti-snapback only catches a violent spring-back, not a tracking correction.
+# Anti-snapback is off. Its numbers are 256 and 0 ms so a later toggle
+# cannot hold a tracking correction.
 AIM = (
-    ("RSAntiSnapback", "True"),
-    ("RSAntiSnapbackDelta", "240"),
-    ("RSAntiSnapbackTimeout", "6"),
+    ("RSAntiSnapback", "False"),
+    ("RSAntiSnapbackDelta", "256"),
+    ("RSAntiSnapbackTimeout", "0"),
     ("RSAntiDeadZone", "0"),
     ("RSOutputCurveCustom", "0.00000, 0.06450, 0.12120, 0.18144, 0.24418, 0.30740, 0.37202, 0.44200, 0.51700, 0.59200, 0.66600, 0.74400, 0.80538, 0.86675, 0.91150, 0.93900, 0.95300, 0.96600, 0.97600, 0.98400, 0.99050, 0.99500, 0.99800, 1.00000"),
     ("L2AntiDeadZone", "100"),
@@ -228,7 +229,7 @@ def apply_aim(root, skip=()):
     Deadzone is never raised. Right-stick anti-deadzone stays 0. The start of
     the stick curve is only slightly quicker than the original, then the same,
     so a correction does not carry past the head. L2 is a full press as soon
-    as it moves. Anti-snapback ignores anything but a hard spring.
+    as it moves. Right-stick anti-snapback is off (256, 0 ms).
     A setting the person passed on the command line (listed in skip) is left as they asked.
     """
     n = 0

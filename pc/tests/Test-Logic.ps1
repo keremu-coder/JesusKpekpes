@@ -283,6 +283,7 @@ function Test-HasNvidia { return $true }
 $tw = Get-PcRegTweaks $cfg
 $keys = @($tw | ForEach-Object { $_.Path + '|' + $_.Name })
 Assert-That 'no duplicate registry targets' ((@($keys | Select-Object -Unique)).Count -eq $keys.Count)
+Assert-That 'Game Bar presence writer is blocked from starting' ((@($tw | Where-Object { $_.Name -eq 'Debugger' -and $_.Path -match 'GameBarPresenceWriter\.exe$' })).Count -eq 1)
 $script:CpuPolicyCache = Get-KCpuPolicy '13th Gen Intel(R) Core(TM) i7-13700K' 1
 Assert-That 'default: Game Mode off on a normal CPU (as in 1.1)' ((@(Get-PcRegTweaks $cfg | Where-Object { $_.Name -eq 'AutoGameModeEnabled' })[0].Value) -eq 0)
 $script:CpuPolicyCache = Get-KCpuPolicy 'AMD Ryzen 9 7950X3D 16-Core Processor' 2
