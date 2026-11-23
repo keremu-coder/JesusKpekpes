@@ -537,6 +537,12 @@ Assert-That 'journal undo knows nvglobal' ((Get-Command Invoke-KRevert).ScriptBl
 $nvgcs = Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaGlobal.cs') -Raw
 Assert-That 'global helper never opens the driver database file' (-not $nvgcs.Contains('nvdrsdb'))
 Assert-That 'global helper is separate from the power-mode helper' ((-not $nvgcs.Contains('KpekpesNvidiaSession')) -and $nvgcs.Contains('KpekpesNvidiaGlobal'))
+$nvgOk = $false
+try { Add-Type -Path (Join-Path $repo 'lib\NvidiaGlobal.cs') -ErrorAction Stop; $nvgOk = [bool]('Kpekpes.KpekpesNvidiaGlobal' -as [type]) } catch { Write-Host ('  compile error: ' + $_.Exception.Message) }
+Assert-That 'global helper compiles' $nvgOk
+if ($nvgOk) {
+    Assert-That 'global helper ids and values match the header' (([Kpekpes.KpekpesNvidiaGlobal]::ShaderCacheId -eq 0x00198FFF) -and ([Kpekpes.KpekpesNvidiaGlobal]::ShaderCacheSizeId -eq 0x00AC8497) -and ([Kpekpes.KpekpesNvidiaGlobal]::VsyncId -eq 0x00A879CF) -and ([Kpekpes.KpekpesNvidiaGlobal]::VsyncForceOff -eq 0x08416747) -and ([Kpekpes.KpekpesNvidiaGlobal]::ShaderCacheUnlimited -eq -1))
+}
 
 Write-Host 'Hitch watch names a stall and changes nothing'
 $none = Get-KHitchLongest @()
