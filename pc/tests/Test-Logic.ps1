@@ -10,6 +10,7 @@ $env:ProgramData = $tmp
 . (Join-Path $repo 'lib\Core.ps1')
 . (Join-Path $repo 'lib\Journal.ps1')
 . (Join-Path $repo 'lib\NvidiaPower.ps1')
+. (Join-Path $repo 'lib\NvidiaGlobal.ps1')
 . (Join-Path $repo 'lib\Hitch.ps1')
 . (Join-Path $repo 'lib\Checks.ps1')
 . (Join-Path $repo 'lib\Stats.ps1')
@@ -521,6 +522,27 @@ Assert-That 'journal undo knows nvpower' ((Get-Command Invoke-KRevert).ScriptBlo
 $nvcs = Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaPower.cs') -Raw
 Assert-That 'predefined NVIDIA profile is never deleted' ($nvcs.Contains('RefusePredefined') -and $nvcs.Contains('IsPredefined'))
 Assert-That 'NVIDIA driver database file is not written' ((-not $nvcs.Contains('nvdrsdb')) -and -not ((Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaPower.ps1') -Raw).Contains('nvdrsdb')))
+
+Write-Host 'NVIDIA shader cache and V-Sync'
+$nvw = @(Get-NvidiaGlobalWanted)
+Assert-That 'three global settings wanted: cache on, size unlimited, V-Sync off' ($nvw.Count -eq 3 -and $nvw[1].Want -eq -1 -and $nvw[2].Want -eq 0x08416747)
+Assert-That 'ids match NVIDIA NvApiDriverSettings.h' ($nvw[0].Id -eq 0x00198FFF -and $nvw[1].Id -eq 0x00AC8497 -and $nvw[2].Id -eq 0x00A879CF)
+Assert-That 'need: already the wanted value is skipped' ((Get-NvidiaGlobalNeed 0 (-1) (-1) 0x4000) -eq 'skip')
+Assert-That 'need: a different value is written' ((Get-NvidiaGlobalNeed 0 0x4000 (-1) 0x4000) -eq 'write')
+Assert-That 'need: no entry and default already right is skipped' ((Get-NvidiaGlobalNeed (-160) 0 1 1) -eq 'skip')
+Assert-That 'need: no entry and default wrong is written' ((Get-NvidiaGlobalNeed (-160) 0 0x08416747 0x60925292) -eq 'write')
+Assert-That 'need: an unreadable status touches nothing' ((Get-NvidiaGlobalNeed (-9) 0 1 1) -eq 'unreadable')
+Assert-That 'saved status: ok and reload are saved, others are not' ((Test-NvidiaGlobalSaved 0) -and (Test-NvidiaGlobalSaved (-157)) -and -not (Test-NvidiaGlobalSaved (-9)))
+Assert-That 'journal undo knows nvglobal' ((Get-Command Invoke-KRevert).ScriptBlock.ToString() -match "eq 'nvglobal'" -and (Get-Command Restore-NvidiaGlobalEntry).ScriptBlock.ToString() -match 'HadOwn')
+$nvgcs = Get-Content -LiteralPath (Join-Path $repo 'lib\NvidiaGlobal.cs') -Raw
+Assert-That 'global helper never opens the driver database file' (-not $nvgcs.Contains('nvdrsdb'))
+Assert-That 'global helper is separate from the power-mode helper' ((-not $nvgcs.Contains('KpekpesNvidiaSession')) -and $nvgcs.Contains('KpekpesNvidiaGlobal'))
+$nvgOk = $false
+try { Add-Type -Path (Join-Path $repo 'lib\NvidiaGlobal.cs') -ErrorAction Stop; $nvgOk = [bool]('Kpekpes.KpekpesNvidiaGlobal' -as [type]) } catch { Write-Host ('  compile error: ' + $_.Exception.Message) }
+Assert-That 'global helper compiles' $nvgOk
+if ($nvgOk) {
+    Assert-That 'global helper ids and values match the header' (([Kpekpes.KpekpesNvidiaGlobal]::ShaderCacheId -eq 0x00198FFF) -and ([Kpekpes.KpekpesNvidiaGlobal]::ShaderCacheSizeId -eq 0x00AC8497) -and ([Kpekpes.KpekpesNvidiaGlobal]::VsyncId -eq 0x00A879CF) -and ([Kpekpes.KpekpesNvidiaGlobal]::VsyncForceOff -eq 0x08416747) -and ([Kpekpes.KpekpesNvidiaGlobal]::ShaderCacheUnlimited -eq -1))
+}
 
 Write-Host 'Hitch watch names a stall and changes nothing'
 $none = Get-KHitchLongest @()

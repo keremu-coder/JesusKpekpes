@@ -42,6 +42,7 @@ $root = $PSScriptRoot
 . (Join-Path $root 'lib\Core.ps1')
 . (Join-Path $root 'lib\Journal.ps1')
 . (Join-Path $root 'lib\NvidiaPower.ps1')
+. (Join-Path $root 'lib\NvidiaGlobal.ps1')
 . (Join-Path $root 'lib\Hitch.ps1')
 . (Join-Path $root 'lib\Checks.ps1')
 . (Join-Path $root 'lib\Stats.ps1')

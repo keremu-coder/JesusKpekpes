@@ -1171,6 +1171,7 @@ function Invoke-PcOptimize {
 
     Write-PcStep 'NVIDIA power for Call of Duty'
     try { if (-not (Invoke-NvidiaCodPower)) { [void]$problems.Add('NVIDIA power mode') } } catch { [void]$problems.Add('NVIDIA power: ' + $_.Exception.Message) }
+    try { if (-not (Invoke-NvidiaGlobalTune)) { [void]$problems.Add('NVIDIA shader cache / V-Sync') } } catch { [void]$problems.Add('NVIDIA shader cache / V-Sync: ' + $_.Exception.Message) }
 
     if (-not $Reapply) {
         Write-PcStep 'Logon re-apply'
