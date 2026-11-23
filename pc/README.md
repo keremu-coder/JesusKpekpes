@@ -93,6 +93,10 @@ There is one profile: maximum. Each group can be switched off in `C:\ProgramData
 
 The GPU driver's database file is not written by hand. Prefer maximum performance for Call of Duty is set through NVIDIA's own interface, recorded in the undo journal, and removed by Undo.
 
+### NVIDIA shader cache and V-Sync (global profile)
+
+Optimize also sets, in NVIDIA's **global** profile: **Shader cache size = Unlimited** (and Shader cache On if it was off) and **Vertical sync = Off**. Nothing else is changed. It needs only the driver, not the NVIDIA app or control panel. It uses a separate helper (`lib\NvidiaGlobal.cs`), so the power-mode step is not affected if it fails. The old values are journaled first, nothing is saved unless every value reads back exactly, and Undo puts the old value back or removes the override. The ids and values come from NVIDIA's public `NvApiDriverSettings.h`. Call of Duty's own in-game V-Sync is set separately in its options file. The monitor rate is handled by the Monitor refresh step: it raises to the highest rate Windows lists at the same resolution, so a 200 Hz panel is set to 200 Hz.
+
 ### NVIDIA power
 
 Optimize sets **Power management mode = Prefer maximum performance** for `cod.exe`, `cod24.exe`, `cod23.exe` and `ModernWarfare.exe`. The value already on the profile is stored in the journal first. If that value was inherited and is already Prefer maximum, it is left unpinned. Undo puts a profile's own old value back, or removes the override if it was inherited. A profile this tool created is deleted on Undo only when it is not one of NVIDIA's own profiles. If NVIDIA's interface is missing, nothing is written. Set it once by hand: NVIDIA Control Panel, Manage 3D settings, Program Settings, add `cod.exe`, Power management mode = Prefer maximum performance.
