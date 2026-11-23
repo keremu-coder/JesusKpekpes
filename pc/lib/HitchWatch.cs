@@ -47,7 +47,7 @@ namespace Kpekpes
         public static readonly Guid PerfGuid = new Guid("ce1dbfb4-137e-4da6-87b0-3f59aa102cbc");
         public static readonly Guid ThreadGuid = new Guid("3d6fa8d1-fe05-11d0-9dda-00c04fd7ba7c");
         public static readonly Guid KernelGuid = new Guid("9e814aad-3204-11d2-9a82-006008a86939");
-        // Microsoft: a session that is not named "NT Kernel Logger" must not use SystemTraceControlGuid (StartTrace returns error 87).
+        // Microsoft: a private session must not use the kernel trace GUID; StartTrace returns error 87.
         public static readonly Guid SessionGuid = new Guid("b233abdc-ef80-4505-83e9-d095b1cc698e");
 
         public static long DurationUs(long start, long end, long freq)
