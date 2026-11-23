@@ -545,6 +545,8 @@ if ($nvgOk) {
 }
 
 Write-Host 'Hitch watch names a stall and changes nothing'
+$hitchSrc = Get-Content -LiteralPath (Join-Path $repo 'lib\HitchWatch.cs') -Raw
+Assert-That 'hitch trace uses its own GUID, not the kernel one (Windows error 87)' (($hitchSrc -match 'props\.Wnode\.Guid = KpekpesHitchMath\.SessionGuid') -and ($hitchSrc -notmatch 'props\.Wnode\.Guid = KpekpesHitchMath\.KernelGuid'))
 $none = Get-KHitchLongest @()
 Assert-That 'no stalls means no name' ($null -eq $none)
 $skip = Get-KHitchLongest @(
