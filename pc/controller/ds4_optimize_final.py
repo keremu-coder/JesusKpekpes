@@ -223,6 +223,14 @@ AIM = (
     ("R2OutputCurveMode", "custom"),
 )
 
+# Right-stick axis tab. The stick type stays Radial, so these are stored as you set them.
+RS_AXIS = (
+    ("MaxZoneX", "94"),
+    ("AntiDeadZoneX", "14"),
+    ("MaxZoneY", "95"),
+    ("AntiDeadZoneY", "15"),
+)
+
 def apply_aim(root, skip=()):
     """A little more stick response without sailing past the target, and instant ADS.
 
@@ -240,7 +248,39 @@ def apply_aim(root, skip=()):
         if str(old) != str(val):
             print(f"  {tag}: {old} -> {val}")
             n += 1
+    n += apply_rs_axis(root)
     return n
+
+def apply_rs_axis(root):
+    """Set the right-stick axis tab only. The left stick is not touched."""
+    ax = root.find("RSAxialDeadOptions")
+    if ax is None:
+        ax = ET.SubElement(root, "RSAxialDeadOptions")
+    n = 0
+    for tag, val in RS_AXIS:
+        old = _set(ax, tag, val)
+        if str(old) != str(val):
+            print(f"  RS axis {tag}: {old} -> {val}")
+            n += 1
+    return n
+
+def apply_rs_axis_text(text):
+    """Same axis values, changing only the bytes inside the right-stick axis block."""
+    m = re.search(r"(<RSAxialDeadOptions>)(.*?)(</RSAxialDeadOptions>)", text, re.DOTALL)
+    if not m:
+        return text, 0
+    block = m.group(2)
+    n = 0
+    for tag, val in RS_AXIS:
+        bm = re.search(r"<" + tag + r">([^<]*)</" + tag + r">", block)
+        if not bm or bm.group(1) == val:
+            continue
+        print(f"  RS axis {tag}: {bm.group(1)} -> {val}")
+        block = block[:bm.start(1)] + val + block[bm.end(1):]
+        n += 1
+    if n == 0:
+        return text, 0
+    return text[:m.start(2)] + block + text[m.end(2):], n
 
 def apply_aim_text(path, skip=()):
     """The same aim fix for a tuned copy the person has already edited.
@@ -270,6 +310,8 @@ def apply_aim_text(path, skip=()):
                 print(f"  {tag}: {old} -> {val}")
                 n += 1
             break
+    text, axis_n = apply_rs_axis_text(text)
+    n += axis_n
     if n == 0:
         return 0
     try:
