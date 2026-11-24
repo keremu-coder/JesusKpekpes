@@ -223,13 +223,12 @@ AIM = (
     ("R2OutputCurveMode", "custom"),
 )
 
-# Right-stick axis tab. Anti-deadzone stays 0 here. A non-zero value
-# turns stick noise at rest into a constant camera spin. Max zones stay.
+# Right-stick axis tab. These are the values from your tuned profile.
 RS_AXIS = (
     ("MaxZoneX", "94"),
-    ("AntiDeadZoneX", "0"),
+    ("AntiDeadZoneX", "14"),
     ("MaxZoneY", "95"),
-    ("AntiDeadZoneY", "0"),
+    ("AntiDeadZoneY", "15"),
 )
 
 def apply_aim(root, skip=()):
@@ -255,8 +254,8 @@ def apply_aim(root, skip=()):
 def apply_rs_axis(root):
     """Set the right-stick axis tab only. The left stick is not touched.
 
-    The stick stays Radial. Axis anti-deadzone stays 0 so a resting stick
-    cannot shove the camera. The max zones are unchanged.
+    The stick stays Radial. Axis anti-deadzone is 14 on X and 15 on Y.
+    The max zones are unchanged.
     """
     n = 0
     old_type = _set(root, "RSDeadZoneType", "Radial")
