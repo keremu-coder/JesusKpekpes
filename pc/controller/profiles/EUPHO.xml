@@ -65,8 +65,8 @@
     <DeadZoneY>0</DeadZoneY>
     <MaxZoneX>94</MaxZoneX>
     <MaxZoneY>95</MaxZoneY>
-    <AntiDeadZoneX>14</AntiDeadZoneX>
-    <AntiDeadZoneY>15</AntiDeadZoneY>
+    <AntiDeadZoneX>0</AntiDeadZoneX>
+    <AntiDeadZoneY>0</AntiDeadZoneY>
     <MaxOutputX>100</MaxOutputX>
     <MaxOutputY>100</MaxOutputY>
   </RSAxialDeadOptions>
