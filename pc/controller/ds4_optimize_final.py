@@ -223,12 +223,13 @@ AIM = (
     ("R2OutputCurveMode", "custom"),
 )
 
-# Right-stick axis tab. The stick type stays Radial, so these are stored as you set them.
+# Right-stick axis tab. Anti-deadzone stays 0 here. A non-zero value
+# turns stick noise at rest into a constant camera spin. Max zones stay.
 RS_AXIS = (
     ("MaxZoneX", "94"),
-    ("AntiDeadZoneX", "14"),
+    ("AntiDeadZoneX", "0"),
     ("MaxZoneY", "95"),
-    ("AntiDeadZoneY", "15"),
+    ("AntiDeadZoneY", "0"),
 )
 
 def apply_aim(root, skip=()):
@@ -252,11 +253,19 @@ def apply_aim(root, skip=()):
     return n
 
 def apply_rs_axis(root):
-    """Set the right-stick axis tab only. The left stick is not touched."""
+    """Set the right-stick axis tab only. The left stick is not touched.
+
+    The stick stays Radial. Axis anti-deadzone stays 0 so a resting stick
+    cannot shove the camera. The max zones are unchanged.
+    """
+    n = 0
+    old_type = _set(root, "RSDeadZoneType", "Radial")
+    if str(old_type) != "Radial":
+        print(f"  RSDeadZoneType: {old_type} -> Radial")
+        n += 1
     ax = root.find("RSAxialDeadOptions")
     if ax is None:
         ax = ET.SubElement(root, "RSAxialDeadOptions")
-    n = 0
     for tag, val in RS_AXIS:
         old = _set(ax, tag, val)
         if str(old) != str(val):
@@ -265,12 +274,18 @@ def apply_rs_axis(root):
     return n
 
 def apply_rs_axis_text(text):
-    """Same axis values, changing only the bytes inside the right-stick axis block."""
+    """Same axis values, changing only the right-stick tags."""
+    n = 0
+    tm = re.search(r"<RSDeadZoneType>([^<]*)</RSDeadZoneType>", text)
+    if tm and tm.group(1) != "Radial":
+        print(f"  RSDeadZoneType: {tm.group(1)} -> Radial")
+        text = text[:tm.start(1)] + "Radial" + text[tm.end(1):]
+        n += 1
     m = re.search(r"(<RSAxialDeadOptions>)(.*?)(</RSAxialDeadOptions>)", text, re.DOTALL)
     if not m:
-        return text, 0
+        return text, n
     block = m.group(2)
-    n = 0
+    changed = False
     for tag, val in RS_AXIS:
         bm = re.search(r"<" + tag + r">([^<]*)</" + tag + r">", block)
         if not bm or bm.group(1) == val:
@@ -278,9 +293,10 @@ def apply_rs_axis_text(text):
         print(f"  RS axis {tag}: {bm.group(1)} -> {val}")
         block = block[:bm.start(1)] + val + block[bm.end(1):]
         n += 1
-    if n == 0:
-        return text, 0
-    return text[:m.start(2)] + block + text[m.end(2):], n
+        changed = True
+    if changed:
+        text = text[:m.start(2)] + block + text[m.end(2):]
+    return text, n
 
 def apply_aim_text(path, skip=()):
     """The same aim fix for a tuned copy the person has already edited.
