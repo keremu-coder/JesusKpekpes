@@ -99,7 +99,7 @@ internal sealed class RestWatch
         var offsetY = (float)samples.Average(s => (double)y(s)) - StickMath.Rest;
         var biggest = Math.Max(Math.Abs(offsetX), Math.Abs(offsetY));
         if (biggest < MinOffsetCounts || biggest > MaxOffsetCounts) return null;
-        return new Verdict(State.StickOffCentre, side, offsetX, offsetY,
+        return new Verdict(State.StuckOffCentre, side, offsetX, offsetY,
             $"The {(side == Side.Left ? "left" : "right")} stick is resting {offsetX:+0.0;-0.0;0} across and {offsetY:+0.0;-0.0;0} up/down off centre while the pad lies still.");
     }
 
