@@ -12,8 +12,13 @@ internal static class RestWatchTests
 
     private static RestWatch.Verdict Run(RestWatch watch, int seconds, Func<int, byte[]> make)
     {
+        // The watch gives a verdict once and then stays quiet for its cooldown, so keep the first "stuck" verdict if there is one.
         RestWatch.Verdict last = default;
-        for (var ms = 0; ms <= seconds * 1000; ms += 4) last = watch.Feed(make(ms), ms);
+        for (var ms = 0; ms <= seconds * 1000; ms += 4)
+        {
+            last = watch.Feed(make(ms), ms);
+            if (last.State == RestWatch.State.StuckOffCentre) return last;
+        }
         return last;
     }
 
@@ -23,7 +28,7 @@ internal static class RestWatchTests
         check(stuck.State == RestWatch.State.StuckOffCentre && stuck.Stick == RestWatch.Side.Right && Math.Abs(stuck.OffsetX - 6.5f) < 0.1f,
             "rest watch finds a right stick resting 6.5 counts off centre on a still pad");
 
-        var used = Run(new RestWatch(), 4, ms => Report(rx: 134, b1: ms > 3000 ? (byte)0x28 : (byte)0x08));
+        var used = Run(new RestWatch(), 4, ms => Report(rx: 134, b1: ms > 1000 ? (byte)0x28 : (byte)0x08));
         check(used.State == RestWatch.State.Active, "rest watch does nothing while a button is down");
 
         var trigger = Run(new RestWatch(), 4, _ => Report(rx: 134, l2: 40));
