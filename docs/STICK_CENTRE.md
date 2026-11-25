@@ -32,6 +32,9 @@ thread while a game is running is wrong, even if it works.
 9. No drivers, no injection, no touching the game process.
 10. Verify before you claim. Mark anything you could not test as untested.
 
+### Clarification of rule 1 (2026-11-26, written by the AI that took over all packages at the owner's request; the owner should confirm)
+The one-second limit is for anything that sends feature reports or writes: Apply, Restore and rest corrections. Read-only input sampling that the owner starts (the 5 s stick test, the 60 s glitch capture) may run longer, because it only reads reports the pad already sends, on its own shared handle, and sends nothing. Nothing may run by itself without the pad-in-use guard (`PadQuiet`). Auto-apply is off by default.
+
 ## Protocol notes (a summary of the MIT-licensed web tool, NOT verified on hardware)
 
 Source: github.com/dualshock-tools/dualshock-tools.github.io at commit
@@ -59,8 +62,8 @@ Each AI takes one letter. Only edit the files you own.
 | A | `app/StickCentre/WinHidLink.cs` and any native helper | `IControllerLink` over Windows HID (hid.dll): find the pad, USB check, shared access, input read with a timeout, feature get/set, short-lived handle, clear errors for access denied and for HidHide | Opens, reads and closes on a real pad; fake-free unit seams documented |
 | B | `app/StickCentre/StickTest.cs` | Stage 1, read-only: read 5 s hands off, call `StickMath`, return per-stick results and the report rate | Result object and plain-language text; works against a fake link |
 | C | `app/StickCentre/LiveCentre.cs`, `app/StickCentre/CentreProtocol.cs` | Stage 2: protocol port, backup, closed-loop apply with read-back, rollback, rate check | Passes the fake-link tests; hardware checklist items 1 to 6 pass |
-| D | `app/StickCentreForm.cs`, menu entry, config persistence | The tab: Test, Apply my centre, Restore, status, auto-apply when the tab opens and when the pad reconnects (device-arrival event, no polling loop) | Tab works end to end; nothing runs while idle |
-| E | `tests/`, `docs/`, review | Fake `IControllerLink`, unit tests in the style of `tests/Program.cs`, the only person who edits `tests/EngineTests.csproj` and `tests/Program.cs`, merges the PRs, audits the others against the hard rules | CI green, audit notes in the progress log |
+| D | guard added | Auto-apply is now off by default and skips itself when a button, trigger, stick or the pad is moving (`PadQuiet`). Glitch capture button added. |
+| E | tests added | Fake link now waits exactly 2 ms per report. New tests: rest watch, glitch capture, pad guard, HID rules, closed loop with either direction and an axis that does not respond. |
 
 ## Working together
 
@@ -76,11 +79,11 @@ Each AI takes one letter. Only edit the files you own.
 
 | Pkg | Status | Notes |
 |---|---|---|
-| A | PR #16 open | Branch `sc-a-hid`. `WinHidLink` implements `IControllerLink` and registers itself as `StickCentreForm.OpenController`. Check/engine and Check/windows passed (it compiles). Never run against a real pad: hardware checklist items 1 to 7 are untested. |
-| B | merged; spec conflict unresolved | PR #12 Checks passed and the implementation is read-only, but its required five-second open sampling window conflicts with hard rule 1's under-one-second handle limit. The explicit B task says five seconds; owner resolution is needed before treating this as compliant or using the test on hardware. |
-| C | open; audit fix requested | PR #13 Checks pass, but apply/restore exceed the under-one-second hard limit: two 480 ms measurement windows plus two 100 ms protocol waits already total about 1.16 s before HID overhead. Not merged pending a bounded-time fix and test. |
-| D | merged; safety follow-up required | PR #14 Checks passed, but auto-apply defaults on and runs on open/reconnect with no guard for an active game, conflicting with the rule against feature-report traffic while gaming. UI still cannot reach a real controller until package A supplies `OpenController`. |
-| E | PR #15 open | Branch `sc-e-tests`; fake link and conditional B/C tests pushed. Focused B/C fake suites passed against the open C source in a temporary worktree; app build succeeded. The full Linux runner still stops later at an unrelated existing `nova cinema` C/C# comparison. |
+| A | merged (PR #16) | Windows HID link, rest watch, glitch capture, pad-in-use guard. Never run on a real pad. |
+| B | merged | Read-only. The five-second sample is allowed as a read-only exception to rule 1 (see the clarification under Hard rules). |
+| C | merged (PR #13) + closed loop | Measures, takes a bounded step, learns the scale and direction from the result, finishes in at most three writes, restores on any surprise. Typical run about 0.75 s, stops starting writes after 0.8 s. Protocol (mode 4 on the Edge, centre values at indices 8 to 11) NOT checked against upstream source here: the source was unreachable from the authoring sandbox. |
+| D | guard added | Auto-apply is now off by default and skips itself when a button, trigger, stick or the pad is moving (`PadQuiet`). Glitch capture button added. |
+| E | tests added | Fake link now waits exactly 2 ms per report. New tests: rest watch, glitch capture, pad guard, HID rules, closed loop with either direction and an axis that does not respond. |
 
 ## Requests (between packages)
 
@@ -119,6 +122,8 @@ Each AI takes one letter. Only edit the files you own.
 - 2026-11-26, Package A (owner symptom: the stick sometimes snaps to an extreme or gives an instant 360 turn, and in the calibrator it sometimes rests perfectly and sometimes drifts to the end): added `app/StickCentre/GlitchTest.cs`. It is read-only and reads the pad's own input reports, so it can tell a fault in the controller from one in DS4Windows or the game. It counts moves of more than 40 counts from rest while the gyro says the pad was not bumped, and says plainly when the stick sensor is at fault. Check passed. Not run on hardware. A fault like this cannot be calibrated away; RestWatch deliberately ignores offsets above 14 counts.
   - Package D: add a "Glitch capture (60 s, hands off)" button that calls `GlitchTest.Run`. It is user-started only, reads only, and sends no feature report. It runs far longer than one second, so the owner has to accept that for a read-only test, as with Package B.
   - Package E: tests for `GlitchTest.Analyse` with synthetic samples: quiet pad, one false spike, a spike while the pad moves, a stick stuck at the end.
+
+- 2026-11-26, Package C/D/E (all packages taken over at the owner's request): (1) merged A (#16) and C (#13). (2) The held calibration moved the centre by only 5 units per run, which cannot correct a real 3 to 6 percent offset; replaced with a closed loop that sizes the first step from the measured offset (capped at max/100 units, 40 on the Edge), learns the real scale and direction from the first write, and finishes in at most three writes (cap 3 x first step from the original), stopping early under 0.75 percent. If the reading does not move, or moves away, everything is restored. (3) The offset judge needed 50 readings per axis but a 150 ms window gives about 37 on a real pad, so Apply would never have fired; the limit is now 25 for both the judge and the rate comparison. (4) Fake link used Sleep(1) (about 15 ms on Windows); now exact 2 ms. (5) Auto-apply default off; automatic runs skip when the pad is in use. (6) Added Glitch capture button. Windows and engine Check passed. NOT DONE: nothing has run on a real DualSense Edge; the protocol layout could not be compared with the upstream source from here; hardware checklist items 1 to 7 are untested.
 
 ## Paste this to any AI you hand a package to
 
