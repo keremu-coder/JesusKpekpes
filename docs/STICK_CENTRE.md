@@ -108,6 +108,12 @@ Each AI takes one letter. Only edit the files you own.
 
 - 2026-11-25, Package A: added `app/StickCentre/WinHidLink.cs`. A handle exists only between Open and Dispose; finding the pad uses a no-access handle to read vendor and product number; the pad is then opened with shared read and write, so DS4Windows keeps working; reads are overlapped and cancelled on timeout; opening sends no feature report; HidHide is detected from its service key and explained, never changed. No thread, timer or watcher. Check passed on both jobs. Not tested on a real DualSense Edge. USB is judged by the 64-byte input report and the device path; a clone with the same IDs would not be told apart.
 
+- 2026-11-26, Package A (owner request: fix a stick that suddenly stops returning to centre, with no added delay): added `app/StickCentre/RestWatch.cs`, a pure state machine fed with input reports. It says "stick stuck off centre" only after 3 s with no button, both triggers released, the gyro showing the pad lying still, the stick steady, and the offset between 2.5 and 14 counts. It opens nothing, has no thread and sends nothing. Limits are provisional. Not run on hardware. Check passed.
+  - Package C: expose one correction call, `ApplyRestCorrection(link, side, offsetX, offsetY)`: backup, one clamped adjustment, read-back, rate check, restore on any surprise, all under one second.
+  - Package D: an opt-in switch (off by default) that feeds RestWatch from reports the app already reads, and calls C only on a StuckOffCentre verdict. It must never send a feature report while the pad is in use (RestWatch returns Active for that).
+  - Package E: tests for RestWatch with synthetic reports (quiet pad, held pad, both sticks off, offset too big, cooldown).
+  - Open: whether a background read while a game runs is acceptable. It needs its own shared handle, and the owner decides after the hardware checklist shows the report rate is unchanged.
+
 ## Paste this to any AI you hand a package to
 
 > You are joining a multi-AI build on the repo keremu-coder/JesusKpekpes, branch `stick-centre`.
