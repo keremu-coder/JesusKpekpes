@@ -77,14 +77,16 @@ Each AI takes one letter. Only edit the files you own.
 | Pkg | Status | Notes |
 |---|---|---|
 | A | not started | |
-| B | merged to `stick-centre` | PR #12 merged after both Check jobs passed and read-only USB/model audit; fake-link five-second test is in package E. |
+| B | merged; spec conflict unresolved | PR #12 Checks passed and the implementation is read-only, but its required five-second open sampling window conflicts with hard rule 1's under-one-second handle limit. The explicit B task says five seconds; owner resolution is needed before treating this as compliant or using the test on hardware. |
 | C | open; audit fix requested | PR #13 Checks pass, but apply/restore exceed the under-one-second hard limit: two 480 ms measurement windows plus two 100 ms protocol waits already total about 1.16 s before HID overhead. Not merged pending a bounded-time fix and test. |
-| D | merged to `stick-centre` | PR #14 merged after both Check jobs passed; UI remains unable to reach a real controller until package A supplies `OpenController`. |
+| D | merged; safety follow-up required | PR #14 Checks passed, but auto-apply defaults on and runs on open/reconnect with no guard for an active game, conflicting with the rule against feature-report traffic while gaming. UI still cannot reach a real controller until package A supplies `OpenController`. |
 | E | PR #15 open | Branch `sc-e-tests`; fake link and conditional B/C tests pushed. Focused B/C fake suites passed against the open C source in a temporary worktree; app build succeeded. The full Linux runner still stops later at an unrelated existing `nova cinema` C/C# comparison. |
 
 ## Requests (between packages)
 
 - Package C: reduce the measured apply/restore path to comply with hard rule 1 (controller access well under one second), including feature-report waits and rate windows. Current source has two 480 ms windows and two 100 ms waits, so its minimum is already about 1.16 seconds. Add or run fake-link coverage for the bounded duration and re-run the Check workflow before requesting merge.
+- Package B / spec owner: resolve the conflict between B's required five-second input sample and hard rule 1's under-one-second open-handle bound. B reads input reports only and sends no feature reports, but it retains the controller link for the full five seconds.
+- Package D: prevent reconnect auto-apply from issuing feature reports while a game is active. The merged form enables auto-apply by default and has no game-active guard; package E does not own the form code. Review the default and safe activation policy before wiring package A/C into a usable build.
 - Package A: implement the HID link and expose the factory expected by the merged UI. Until then, `OpenController` is unset and the UI cannot operate a real DualSense.
 
 ## Hardware checklist (the owner runs this with the real DualSense Edge)
@@ -101,9 +103,9 @@ Each AI takes one letter. Only edit the files you own.
 
 - 2026-11-25, Claude: created the branch, `StickMath`, `IControllerLink` and this file. The sandbox has no .NET, so none of it was compiled. The first Check run on the branch is the first real build result.
 - 2026-11-25, Claude: fixed the branch naming rule. The first version said `stick-centre/<letter>-<name>`, which Git cannot create while the branch `stick-centre` exists. Use `sc-<letter>-<name>`. A first AI's work was started before this and never reached GitHub, so nothing from it is on any branch.
-- 2026-11-25, Package E: audited PRs #12–#14 and read their GitHub Actions Check results. Merged B (#12) and D (#14), both with green engine and Windows checks. C (#13) is green but held for a hard-rule timing issue: its 480 ms before/after windows and two 100 ms protocol waits exceed one second before HID overhead. No real controller or hardware checklist was available.
+- 2026-11-25, Package E: audited PRs #12–#14 and read their GitHub Actions Check results. B (#12) and D (#14) were merged after green checks; follow-up audit found unresolved hard-rule conflicts: B's five-second sampling window exceeds the generic handle bound, and D's default reconnect auto-apply has no game-active guard. C (#13) is green but held because its 480 ms before/after windows and two 100 ms protocol waits exceed one second before HID overhead. These findings are recorded for follow-up; no real controller or hardware checklist was available.
 - 2026-11-25, Package E: added `FakeControllerLink` and console tests for B and, conditionally, C. The focused B/C fake suites passed against C's current PR source copied into a temporary worktree. The overall Linux runner still fails later at the existing `nova cinema: C and C# differ by 0.016184654` comparison, so a fully green local runner is not claimed. The Windows app build succeeded with two existing warnings; real controller and hardware checks remain untested.
-- 2026-11-25, Package E: PR #15's latest Check run (Actions run 45565306880) passed both `Check/engine` and `Check/windows`. PR #15 remains open for the owner to merge into `stick-centre`; PRs #12 and #14 are merged, and PR #13 remains held for the timing fix.
+- 2026-11-25, Package E: PR #15's final Check run on commit `f72d586` (Actions run 45565535579) passed both `Check/engine` and `Check/windows`. PR #15 remains open for the owner to merge into `stick-centre`; PRs #12 and #14 are merged with the follow-up issues above, and PR #13 remains held for the timing fix.
 
 ## Paste this to any AI you hand a package to
 
