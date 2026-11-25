@@ -53,10 +53,9 @@ internal static class StickCentreTests
         check(rejectedHeader, "protocol rejects an invalid feature-response header");
 
         var bluetooth = new FakeControllerLink { Usb = false };
-        var bluetoothRefused = false;
-        try { _ = LiveCentre.Apply(bluetooth, Path.GetTempPath()); }
-        catch (NotSupportedException) { bluetoothRefused = true; }
-        check(bluetoothRefused && bluetooth.SentReports.Count == 0,
+        var bluetoothResult = LiveCentre.Apply(bluetooth, Path.GetTempPath());
+        check(!bluetoothResult.Success && !bluetoothResult.Applied && bluetooth.SentReports.Count == 0
+            && bluetoothResult.Message.Contains("Bluetooth", StringComparison.Ordinal),
             "live calibration refuses Bluetooth before sending a feature command");
 
         var root = Path.Combine(Path.GetTempPath(), "stick-centre-tests-" + Guid.NewGuid().ToString("N"));
