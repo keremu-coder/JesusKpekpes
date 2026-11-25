@@ -86,10 +86,10 @@ static class StickMath
     }
 
     // Did a change cost any report rate? True means undo it. PROVISIONAL limits, and conservative:
-    // if there is too little data to prove no harm was done, the answer is "worse".
+    // fewer than 50 reports in either short comparison window is too little data, so undo the change.
     public static bool GotWorse(RateStats before, RateStats after)
     {
-        if (before.Reports < 100 || after.Reports < 100) return true;
+        if (before.Reports < 50 || after.Reports < 50) return true;
         return after.PerSecond < before.PerSecond * 0.9 || after.P99GapMs > before.P99GapMs * 1.1;
     }
 }
