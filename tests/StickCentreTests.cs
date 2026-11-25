@@ -20,6 +20,11 @@ internal static class StickCentreTests
         check(link.SentReports.Count == 0 && link.FeatureReads == 0,
             "the read-only test sends no feature reports and makes no feature reads");
         check(link.Disposals == 0, "the read-only test leaves link ownership and disposal to its caller");
+
+        var bluetooth = new FakeControllerLink { Usb = false };
+        var refused = StickTest.Run(bluetooth);
+        check(!refused.Supported && !refused.Completed && bluetooth.InputReads == 0 && bluetooth.SentReports.Count == 0,
+            "the read-only test refuses Bluetooth without opening an input sampling loop");
     }
 #endif
 
@@ -32,6 +37,14 @@ internal static class StickCentreTests
             "protocol parsing reads twelve little-endian values");
         check(protocol.SentReports.Count == 1 && protocol.SentReports[0].SequenceEqual(new byte[] { 0x80, 12, 4 }),
             "DualSense Edge read framing uses feature command 0x80, command 12, mode 4");
+        var overLimit = (ushort[])snapshot.Values.Clone();
+        overLimit[11] = 4096;
+        var writesBeforeLimitCheck = protocol.SentReports.Count;
+        var limitRefused = false;
+        try { CentreProtocol.WriteVolatile(protocol, snapshot with { Values = overLimit }); }
+        catch (InvalidDataException) { limitRefused = true; }
+        check(limitRefused && protocol.SentReports.Count == writesBeforeLimitCheck,
+            "DualSense Edge protocol refuses values above 4095 before sending a write");
 
         var malformed = new FakeControllerLink { InvalidAnswerHeader = true };
         var rejectedHeader = false;
@@ -82,6 +95,14 @@ internal static class StickCentreTests
                 "rollback restores every original in-memory value");
             check(rollbackLink.SentReports.All(IsAllowedVolatileReport),
                 "rollback uses only the volatile write command and no permanent-save command");
+
+            var rateLink = new FakeControllerLink { SlowAfterWrite = true };
+            var rateOriginal = (ushort[])rateLink.Values.Clone();
+            var rateRollback = LiveCentre.Apply(rateLink, Path.Combine(root, "rate-rollback"));
+            check(!rateRollback.Success && rateRollback.RolledBack && rateLink.VolatileWrites == 2,
+                "a worsened post-write report rate triggers automatic rollback");
+            check(rateLink.Values.SequenceEqual(rateOriginal),
+                "rate-triggered rollback restores the original in-memory values");
         }
         finally
         {
