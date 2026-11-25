@@ -1,0 +1,634 @@
+diff --git a/README.md b/README.md
+index 2aa7d97..4fd7c3d 100644
+--- a/README.md
++++ b/README.md
+@@ -5,9 +5,19 @@ The game stays on the headphones you already use. Secure Boot stays on.
+ Open the app. Three steps.
+ 
+ 1. Confirm the headphones.
+-2. Hear a step, then a shot.
++2. Pick a tune (Footsteps or Everyday) and press Play. You hear a few steps and a boom without the tune, then with it.
+ 3. Turn on. Press Yes if Windows asks.
+ 
+-Footstep hit raises only the short step. Surround quiet turns the room down. Leave the game on those headphones.
++Footstep boost lifts the step range. Footsteps is the competitive tune. Everyday is gentler for music and chat.
++Surround 7.1 is advanced and needs your headphones set to 7.1 in Windows.
+ 
+-Equalizer APO must already be installed. That is the piece that runs the mix on the headphones. Your own device waits until it is signed.
++Safe to use next to other audio setups
++- Our settings live in their own folder inside the Equalizer APO config folder (JesusKpekpes\chain.txt).
++- The only change to your config.txt is one include line. A one-time backup is saved as config.txt.jesuskpekpes-backup.
++- Turn off only rewrites our own file. Your Equalizer APO, HeSuVi, Rara or other setup is never edited.
++- Remove completely (tray menu) deletes our folder and that one line.
++- If we find another setup (HeSuVi, VST plugins, other EQ) we tell you and leave it alone.
++
++The tunes are starting points to adjust by ear. The loudness is lowered automatically so loud sounds do not distort, so you may want to raise the headphone volume a little.
++
++Equalizer APO must already be installed. That is the piece that runs the mix on the headphones. An automatic installer comes next. Your own device waits until it is signed.
+diff --git a/app/GuideForm.cs b/app/GuideForm.cs
+index bd6dea1..0e47b58 100644
+--- a/app/GuideForm.cs
++++ b/app/GuideForm.cs
+@@ -1,4 +1,4 @@
+-using System.Reflection;
++using System.Globalization;
+ using NAudio.CoreAudioApi;
+ using NAudio.Wave;
+ 
+@@ -13,17 +13,21 @@ sealed class GuideForm : Form
+     readonly Label _body = new();
+     readonly Button _next = new();
+     readonly Button _back = new();
+-    readonly CheckBox _windows = new();
+-    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
++    readonly ComboBox _preset = new() { DropDownStyle = ComboBoxStyle.DropDownList };
++    readonly Button _play = new();
++    readonly Label _notice = new();
++    readonly System.Windows.Forms.Timer _applyTimer = new() { Interval = 300 };
++    static readonly string[] PresetNames = [.. Preset.All.Select(p => p.Name), "Surround 7.1 (advanced)"];
++    readonly TrackBar _loud = new() { Minimum = 0, Maximum = 100, Value = 70, TickFrequency = 25 };
+     readonly TrackBar _room = new() { Minimum = 0, Maximum = 100, Value = 100, TickFrequency = 25 };
+     readonly Label _loudLabel = new();
+     readonly Label _roomLabel = new();
+     readonly NotifyIcon _tray = new();
+     int _page;
+-    Live? _live;
+     WasapiOut? _preview;
+     MMDevice? _previewDevice;
+     bool _exit;
++    bool _on;
+     readonly bool _resume;
+ 
+     public GuideForm(bool resume)
+@@ -55,17 +59,25 @@ sealed class GuideForm : Form
+         var selected = _devices.FindIndex(d => d.Id == Devices.DefaultId());
+         if (_list.Items.Count > 0) _list.SelectedIndex = Math.Max(0, selected);
+ 
+-        _windows.SetBounds(28, 444, 404, 28);
+-        _windows.Text = "Start with Windows";
+-        _windows.Checked = true;
+-        _windows.Visible = false;
++        foreach (var name in PresetNames) _preset.Items.Add(name);
++        _preset.SetBounds(28, 210, 404, 30);
++        _preset.BackColor = Color.FromArgb(18, 20, 28);
++        _preset.ForeColor = Color.FromArgb(242, 243, 245);
++        _preset.FlatStyle = FlatStyle.Flat;
++        _preset.Visible = false;
++        Style(_play, "Play before, then after", 28, 252, 404);
++        _play.Visible = false;
++        _play.Click += (_, _) => PlayPreview();
++        _notice.SetBounds(28, 430, 404, 56);
++        _notice.ForeColor = Color.FromArgb(240, 180, 90);
++        _applyTimer.Tick += (_, _) => { _applyTimer.Stop(); WriteIfOn(); };
++        LoadSettings();
++        _preset.SelectedIndexChanged += (_, _) => { ShowPage(_page); ApplyMix(); };
+ 
+-        _loudLabel.SetBounds(28, 200, 404, 22);
+-        _loudLabel.Text = "Footstep hit";
+-        _loud.SetBounds(28, 224, 404, 40);
+-        _roomLabel.SetBounds(28, 276, 404, 22);
+-        _roomLabel.Text = "Surround quiet";
+-        _room.SetBounds(28, 300, 404, 40);
++        _loudLabel.SetBounds(28, 296, 404, 22);
++        _loud.SetBounds(28, 318, 404, 40);
++        _roomLabel.SetBounds(28, 360, 404, 22);
++        _room.SetBounds(28, 382, 404, 40);
+         _loud.Visible = false;
+         _room.Visible = false;
+         _loudLabel.Visible = false;
+@@ -78,12 +90,13 @@ sealed class GuideForm : Form
+         _back.Click += (_, _) => ShowPage(_page - 1);
+         _next.Click += (_, _) => OnNext();
+ 
+-        Controls.AddRange([_title, _step, _body, _list, _loudLabel, _loud, _roomLabel, _room, _windows, _back, _next]);
++        Controls.AddRange([_title, _step, _body, _list, _preset, _play, _loudLabel, _loud, _roomLabel, _room, _notice, _back, _next]);
+         _tray.Icon = SystemIcons.Application;
+         _tray.Text = "Jesus Kpekpes";
+         _tray.DoubleClick += (_, _) => { Show(); WindowState = FormWindowState.Normal; Activate(); };
+         var menu = new ContextMenuStrip();
+         menu.Items.Add("Open", null, (_, _) => { Show(); WindowState = FormWindowState.Normal; });
++        menu.Items.Add("Remove completely", null, (_, _) => RemoveAll());
+         menu.Items.Add("Exit", null, (_, _) => { _exit = true; Close(); });
+         _tray.ContextMenuStrip = menu;
+         ShowPage(0);
+@@ -92,17 +105,27 @@ sealed class GuideForm : Form
+ 
+     AudioDevice? Selected => _list.SelectedItem as AudioDevice;
+ 
++    bool Surround => _preset.SelectedIndex == Preset.All.Length;
++
++    string BuildText(string device) => Surround
++        ? ApoConfig.BuildSurround(device, _loud.Value, _room.Value)
++        : ApoConfig.BuildStereo(device, Preset.All[Math.Max(0, _preset.SelectedIndex)], _loud.Value / 100.0);
++
+     void ShowPage(int page)
+     {
+         _page = Math.Clamp(page, 0, 2);
+         _back.Visible = _page > 0;
+         _list.Visible = _page == 0;
+-        _windows.Visible = _page == 2;
+-        var mix = _page == 2;
+-        _loud.Visible = mix;
+-        _room.Visible = mix;
+-        _loudLabel.Visible = mix;
+-        _roomLabel.Visible = mix;
++        var tune = _page > 0;
++        _preset.Visible = tune;
++        _play.Visible = tune;
++        _play.Enabled = !Surround;
++        _loud.Visible = tune;
++        _loudLabel.Visible = tune;
++        _room.Visible = tune && Surround;
++        _roomLabel.Visible = tune && Surround;
++        _loudLabel.Text = Surround ? "Footstep hit  " + _loud.Value : "Footstep boost  " + _loud.Value;
++        _roomLabel.Text = "Surround quiet  " + _room.Value;
+         StopPreview();
+         if (_page == 0)
+         {
+@@ -114,10 +137,11 @@ sealed class GuideForm : Form
+         else if (_page == 1)
+         {
+             _step.Text = "Step 2 of 3";
+-            _body.Text = "A step plays, then a shot. The step should come through clearer than the shot.";
++            _body.Text = Surround
++                ? "Surround 7.1 needs your headphones set to 7.1 in Windows. There is no preview for it yet."
++                : "Pick a tune and press Play. You hear a few steps and a boom without the tune, then with it. Keep the volume low.";
+             _next.Text = "Next";
+             _next.Enabled = true;
+-            PlayPreview();
+         }
+         else
+         {
+@@ -129,7 +153,9 @@ sealed class GuideForm : Form
+             }
+             else
+             {
+-                _body.Text = $"The game stays on {Selected.Name}. Secure Boot stays on.";
++                _body.Text = _on
++                    ? $"On for {Selected.Name}. Leave the game on these headphones."
++                    : $"The game stays on {Selected.Name}. Secure Boot stays on. Your own audio setup is not changed.";
+                 _next.Text = _on ? "Turn off" : "Turn on";
+                 _next.Enabled = true;
+             }
+@@ -149,80 +175,97 @@ sealed class GuideForm : Form
+         else TurnOff();
+     }
+ 
+-    bool _on;
+-
+     void ApplyMix()
+     {
+-        _loudLabel.Text = "Footstep hit  " + _loud.Value;
++        _loudLabel.Text = Surround ? "Footstep hit  " + _loud.Value : "Footstep boost  " + _loud.Value;
+         _roomLabel.Text = "Surround quiet  " + _room.Value;
+-        _live?.SetMix(_loud.Value / 100f, _room.Value / 100f);
+-        if (_on && Selected is not null) InPlace.Apply(Selected.Name, _loud.Value, _room.Value);
++        _play.Enabled = !Surround;
++        _applyTimer.Stop();
++        _applyTimer.Start();
++    }
++
++    void WriteIfOn()
++    {
++        SaveSettings();
++        if (!_on || Selected is null) return;
++        var store = ConfigStore.Default();
++        if (store is null || !store.Write(BuildText(Selected.Name)))
++            _body.Text = "Could not update the settings. Close and open this app again.";
+     }
+ 
+     void TurnOn()
+     {
+         var phones = Selected;
+         if (phones is null) return;
+-        _on = InPlace.Apply(phones.Name, _loud.Value, _room.Value);
+-        Remember(phones.Id, _on);
+-        if (_windows.Checked) Startup.Enable();
+-        else Startup.Disable();
++        var store = ConfigStore.Default();
++        if (store is null)
++        {
++            _on = false;
++            _body.Text = "Equalizer APO is not installed yet. Nothing was changed. Install it, then come back.";
++            return;
++        }
++        _on = store.Write(BuildText(phones.Name));
++        SaveSettings();
+         _next.Text = _on ? "Turn off" : "Turn on";
+         _body.Text = _on
+             ? $"On. Leave the game on {phones.Name}. You can close this window."
+-            : "Equalizer APO is not installed. The game stays on these headphones. Secure Boot stays on.";
++            : "Could not write the settings. Run this app as administrator.";
++        var others = store.Conflicts();
++        _notice.Text = _on && others.Count > 0
++            ? "Found other audio setups: " + string.Join(" ", others) + " They were left alone. If the sound is wrong, press Turn off."
++            : "";
+         _tray.Visible = _on;
+     }
+ 
+     void TurnOff()
+     {
+-        InPlace.Clear();
++        ConfigStore.Default()?.Off();
+         _on = false;
+-        _live?.Dispose();
+-        _live = null;
+         _tray.Visible = false;
+-        Remember(Selected?.Id, false);
++        _notice.Text = "";
++        SaveSettings();
+         _next.Text = "Turn on";
++        _body.Text = "Off. Everything is back to how you had it.";
++    }
++
++    void RemoveAll()
++    {
++        ConfigStore.Default()?.Remove();
++        _on = false;
++        _tray.Visible = false;
++        SaveSettings();
++        ShowPage(2);
++        _body.Text = "Removed. Nothing of ours is left in Equalizer APO.";
+     }
+ 
+     void TryResume()
+     {
+         var saved = Remembered();
+-        if (saved.On != true || saved.Headphones is null) return;
++        if (!_on || saved.Headphones is null) return;
+         var phones = _devices.FirstOrDefault(d => d.Id == saved.Headphones);
+         if (phones is null) return;
+         _list.SelectedItem = phones;
+-        _on = InPlace.Apply(phones.Name, _loud.Value, _room.Value);
+-        if (!_on) return;
+         ShowPage(2);
+-        _body.Text = $"On. The game stays on {phones.Name}.";
+         WindowState = FormWindowState.Minimized;
+     }
+ 
+     void PlayPreview()
+     {
+-        if (Selected is null) return;
++        if (Selected is null || Surround) return;
++        StopPreview();
+         const int sr = 48000;
+-        const int n = sr * 2;
+-        var input = Enumerable.Range(0, 8).Select(_ => new float[n]).ToArray();
+-        for (var i = sr / 2; i < sr / 2 + 120; i++)
++        var (dry, wet) = ApoConfig.RenderPreview(Preset.All[Math.Max(0, _preset.SelectedIndex)], _loud.Value / 100.0);
++        var gap = new float[(int)(sr * 0.4)];
++        var mono = dry.Concat(gap).Concat(wet).ToArray();
++        var bytes = new byte[mono.Length * 8];
++        for (var i = 0; i < mono.Length; i++)
+         {
+-            var env = MathF.Sin((i - sr / 2) / 120f * MathF.PI);
+-            input[Engine.Sl][i] = MathF.Sin(2 * MathF.PI * 3200 * i / sr) * 0.25f * env;
++            var v = Math.Clamp(mono[i] * 0.5f, -1f, 1f);
++            BitConverter.TryWriteBytes(bytes.AsSpan(i * 8, 4), v);
++            BitConverter.TryWriteBytes(bytes.AsSpan(i * 8 + 4, 4), v);
+         }
+-        for (var i = sr; i < sr + (int)(sr * 0.15); i++)
+-            input[Engine.L][i] = MathF.Sin(2 * MathF.PI * 90 * i / sr) * 0.8f;
+-        var left = new float[n];
+-        var right = new float[n];
+-        new Engine(sr).Process(input, left, right);
+-        var interleaved = new byte[n * 8];
+-        for (var i = 0; i < n; i++)
+-        {
+-            BitConverter.TryWriteBytes(interleaved.AsSpan(i * 8, 4), left[i] * 0.4f);
+-            BitConverter.TryWriteBytes(interleaved.AsSpan(i * 8 + 4, 4), right[i] * 0.4f);
+-        }
+-        var buffer = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(sr, 2)) { DiscardOnBufferOverflow = true };
+-        buffer.AddSamples(interleaved, 0, interleaved.Length);
++        var buffer = new BufferedWaveProvider(WaveFormat.CreateIeeeFloatWaveFormat(sr, 2)) { DiscardOnBufferOverflow = true, BufferLength = bytes.Length + 4096 };
++        buffer.AddSamples(bytes, 0, bytes.Length);
+         using var enumerator = new MMDeviceEnumerator();
+         _previewDevice = enumerator.GetDevice(Selected.Id);
+         _preview = new WasapiOut(_previewDevice, AudioClientShareMode.Shared, true, (int)Math.Max(1, Selected.PeriodMs));
+@@ -245,7 +288,7 @@ sealed class GuideForm : Form
+ 
+     protected override void OnFormClosing(FormClosingEventArgs e)
+     {
+-        if ((_live is not null || _on) && !_exit)
++        if (_on && !_exit)
+         {
+             e.Cancel = true;
+             Hide();
+@@ -258,7 +301,7 @@ sealed class GuideForm : Form
+     protected override void OnFormClosed(FormClosedEventArgs e)
+     {
+         StopPreview();
+-        _live?.Dispose();
++        _applyTimer.Dispose();
+         _tray.Visible = false;
+         _tray.Dispose();
+         base.OnFormClosed(e);
+@@ -274,51 +317,70 @@ sealed class GuideForm : Form
+         button.FlatAppearance.BorderSize = 0;
+     }
+ 
+-    static void Remember(string? headphones, bool on)
++    static string SettingsPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes", "settings.txt");
++
++    void SaveSettings()
++    {
++        try
++        {
++            Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath)!);
++            File.WriteAllLines(SettingsPath,
++            [
++                "headphones=" + Selected?.Id,
++                "on=" + (_on ? "1" : "0"),
++                "preset=" + Math.Max(0, _preset.SelectedIndex).ToString(CultureInfo.InvariantCulture),
++                "boost=" + _loud.Value.ToString(CultureInfo.InvariantCulture),
++                "quiet=" + _room.Value.ToString(CultureInfo.InvariantCulture),
++            ]);
++        }
++        catch (IOException) { }
++        catch (UnauthorizedAccessException) { }
++    }
++
++    static Dictionary<string, string> ReadSettings()
+     {
+-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes");
+-        Directory.CreateDirectory(dir);
+-        File.WriteAllLines(Path.Combine(dir, "settings.txt"),
+-        [
+-            "headphones=" + headphones,
+-            "on=" + (on ? "1" : "0"),
+-        ]);
++        try
++        {
++            if (!File.Exists(SettingsPath)) return new Dictionary<string, string>();
++            return File.ReadAllLines(SettingsPath)
++                .Select(line => line.Split('=', 2))
++                .Where(p => p.Length == 2)
++                .GroupBy(p => p[0])
++                .ToDictionary(g => g.Key, g => g.Last()[1]);
++        }
++        catch (IOException) { return new Dictionary<string, string>(); }
+     }
+ 
+-    static (string? Headphones, bool? On) Remembered()
++    static (string? Headphones, bool On) Remembered()
+     {
+-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JesusKpekpes", "settings.txt");
+-        if (!File.Exists(path)) return (null, null);
+-        var map = File.ReadAllLines(path)
+-            .Select(line => line.Split('=', 2))
+-            .Where(p => p.Length == 2)
+-            .ToDictionary(p => p[0], p => p[1]);
++        var map = ReadSettings();
+         map.TryGetValue("headphones", out var headphones);
+-        map.TryGetValue("on", out var on);
+-        return (headphones, on == "1");
++        return (headphones, map.TryGetValue("on", out var on) && on == "1");
++    }
++
++    void LoadSettings()
++    {
++        Startup.Disable();
++        var map = ReadSettings();
++        int Num(string key, int fallback, int max) =>
++            map.TryGetValue(key, out var v) && int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n)
++                ? Math.Clamp(n, 0, max) : fallback;
++        _preset.SelectedIndex = Num("preset", 0, PresetNames.Length - 1);
++        _loud.Value = Num("boost", 70, 100);
++        _room.Value = Num("quiet", 100, 100);
++        _on = ConfigStore.Default()?.IsOn() == true && map.TryGetValue("on", out var on) && on == "1";
+     }
+ }
+ 
++/// <summary>Old versions added a Windows startup shortcut that asked for admin at every sign-in. We only remove it now.</summary>
+ static class Startup
+ {
+     static string Link => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), "Jesus Kpekpes.lnk");
+ 
+-    public static void Enable()
+-    {
+-        var shellType = Type.GetTypeFromProgID("WScript.Shell");
+-        if (shellType is null || Environment.ProcessPath is null) return;
+-        var shell = Activator.CreateInstance(shellType);
+-        var shortcut = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, [Link]);
+-        if (shortcut is null) return;
+-        var kind = shortcut.GetType();
+-        kind.InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut, [Environment.ProcessPath]);
+-        kind.InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut, ["--on"]);
+-        kind.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut, [AppContext.BaseDirectory]);
+-        kind.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
+-    }
+-
+     public static void Disable()
+     {
+-        if (File.Exists(Link)) File.Delete(Link);
++        try { if (File.Exists(Link)) File.Delete(Link); }
++        catch (IOException) { }
++        catch (UnauthorizedAccessException) { }
+     }
+ }
+diff --git a/app/InPlace.cs b/app/InPlace.cs
+deleted file mode 100644
+index b117cf8..0000000
+--- a/app/InPlace.cs
++++ /dev/null
+@@ -1,60 +0,0 @@
+-namespace JesusKpekpes;
+-
+-static class InPlace
+-{
+-    const string FileName = "jesus-kpekpes.txt";
+-    const string IncludeLine = "Include: jesus-kpekpes.txt";
+-
+-    public static bool Apply(string headphoneName, int hit, int quiet)
+-    {
+-        var dir = ConfigDir();
+-        if (dir is null) return false;
+-        var hitDb = hit / 100f * 9f;
+-        var roomDb = -(quiet / 100f * 12f);
+-        var bodyDb = hit / 100f * 4f;
+-        var text =
+-            "Device: " + headphoneName + "\r\n" +
+-            "Channel: C\r\n" +
+-            "Preamp: -10 dB\r\n" +
+-            "Channel: L R\r\n" +
+-            "Filter: ON LSC Fc 140 Hz Gain -6 dB Q 0.7\r\n" +
+-            "Channel: SL SR RL RR\r\n" +
+-            "Preamp: " + roomDb.ToString("0.0") + " dB\r\n" +
+-            "Filter: ON PK Fc 280 Hz Gain " + bodyDb.ToString("0.0") + " dB Q 0.8\r\n" +
+-            "Filter: ON PK Fc 3400 Hz Gain " + hitDb.ToString("0.0") + " dB Q 1.2\r\n" +
+-            "Channel: LFE\r\n" +
+-            "Preamp: -30 dB\r\n";
+-        try
+-        {
+-            File.WriteAllText(Path.Combine(dir, FileName), text);
+-            var main = Path.Combine(dir, "config.txt");
+-            if (!File.Exists(main))
+-                File.WriteAllText(main, IncludeLine + "\r\n");
+-            else if (!File.ReadAllText(main).Contains(FileName, StringComparison.OrdinalIgnoreCase))
+-                File.AppendAllText(main, "\r\n" + IncludeLine + "\r\n");
+-            return true;
+-        }
+-        catch (UnauthorizedAccessException)
+-        {
+-            return false;
+-        }
+-    }
+-
+-    public static void Clear()
+-    {
+-        var dir = ConfigDir();
+-        if (dir is null) return;
+-        var own = Path.Combine(dir, FileName);
+-        if (File.Exists(own)) File.Delete(own);
+-        var main = Path.Combine(dir, "config.txt");
+-        if (!File.Exists(main)) return;
+-        var lines = File.ReadAllLines(main).Where(line => !line.Contains(FileName, StringComparison.OrdinalIgnoreCase));
+-        File.WriteAllLines(main, lines);
+-    }
+-
+-    static string? ConfigDir()
+-    {
+-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "EqualizerAPO", "config");
+-        return Directory.Exists(dir) ? dir : null;
+-    }
+-}
+diff --git a/app/JesusKpekpes.App.csproj b/app/JesusKpekpes.App.csproj
+index b08116c..f5246c6 100644
+--- a/app/JesusKpekpes.App.csproj
++++ b/app/JesusKpekpes.App.csproj
+@@ -12,5 +12,7 @@
+   <ItemGroup>
+     <PackageReference Include="NAudio" Version="2.2.1" />
+     <Compile Include="..\host\Engine.cs" Link="Engine.cs" />
++    <Compile Include="..\host\Presets.cs" Link="Presets.cs" />
++    <Compile Include="..\host\ConfigStore.cs" Link="ConfigStore.cs" />
+   </ItemGroup>
+ </Project>
+diff --git a/tests/EngineTests.csproj b/tests/EngineTests.csproj
+index e942ef5..b2dd604 100644
+--- a/tests/EngineTests.csproj
++++ b/tests/EngineTests.csproj
+@@ -7,5 +7,7 @@
+   </PropertyGroup>
+   <ItemGroup>
+     <Compile Include="..\host\Engine.cs" Link="Engine.cs" />
++    <Compile Include="..\host\Presets.cs" Link="Presets.cs" />
++    <Compile Include="..\host\ConfigStore.cs" Link="ConfigStore.cs" />
+   </ItemGroup>
+ </Project>
+diff --git a/tests/Program.cs b/tests/Program.cs
+index d941cd1..aef0651 100644
+--- a/tests/Program.cs
++++ b/tests/Program.cs
+@@ -69,4 +69,111 @@ var quietGain = Energy(quietOut, sr - 4000, 4000) / Energy(quiet[Engine.L], sr -
+ var loudGain = Energy(loudOut, sr - 4000, 4000) / Energy(loud[Engine.L], sr - 4000, 4000);
+ Check(quietGain > loudGain, $"quiet gain {quietGain} should be above loud gain {loudGain}");
+ 
++
++// ---- Stereo presets and Equalizer APO config ----
++foreach (var preset in Preset.All)
++{
++    var full = preset.Filters(1.0);
++    var peak = ApoConfig.PeakDb(full);
++    var pre = ApoConfig.PreampDb(full);
++    Check(pre <= -0.5, $"{preset.Name}: preamp {pre} must leave at least 0.5 dB headroom");
++    Check(peak + pre <= -0.4, $"{preset.Name}: loudest point {peak + pre} dB must stay below 0 dB");
++    Check(ApoConfig.ResponseDb(full, 3400) > ApoConfig.ResponseDb(full, 100) + 2, $"{preset.Name}: step band should sit above the low end");
++    var none = preset.Filters(0.0);
++    Check(Math.Abs(ApoConfig.ResponseDb(none, 3400)) < 1.0, $"{preset.Name}: boost 0 should leave 3.4 kHz flat, got {ApoConfig.ResponseDb(none, 3400)}");
++    var more = ApoConfig.ResponseDb(preset.Filters(1.0), 3400);
++    var less = ApoConfig.ResponseDb(preset.Filters(0.5), 3400);
++    Check(more > less, $"{preset.Name}: more boost must give more 3.4 kHz");
++}
++
++// The predicted response must match what the rendering filters really do to a tone.
++{
++    var chain = Preset.Footsteps.Filters(1.0);
++    foreach (var hz in new[] { 200.0, 1800.0, 3400.0, 7000.0 })
++    {
++        var biquads = chain.Select(f => new EqBiquad(f, sr)).ToArray();
++        double inE = 0, outE = 0;
++        for (var i = 0; i < sr; i++)
++        {
++            var x = (float)Math.Sin(2 * Math.PI * hz * i / sr) * 0.1f;
++            var y = x;
++            foreach (var b in biquads) y = b.Process(y);
++            if (i > sr / 2) { inE += x * x; outE += y * y; }
++        }
++        var measured = 10 * Math.Log10(outE / inE);
++        var predicted = ApoConfig.ResponseDb(chain, hz);
++        Check(Math.Abs(measured - predicted) < 0.3, $"{hz} Hz: rendered {measured:0.00} dB but predicted {predicted:0.00} dB");
++    }
++}
++
++// Config text: ASCII-safe numbers in any culture, always resets scope at the end.
++{
++    var oldCulture = System.Globalization.CultureInfo.CurrentCulture;
++    try
++    {
++        try { System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("de-DE"); }
++        catch (System.Globalization.CultureNotFoundException) { }
++        var text = ApoConfig.BuildStereo("Speakers (Test Headphones)", Preset.Footsteps, 0.7);
++        Check(!text.Contains("0,"), "numbers must use dots, not commas");
++        Check(text.Contains("Preamp: -"), "preamp line is missing");
++        Check(text.TrimEnd().EndsWith("Channel: all"), "config must end by resetting Channel");
++        Check(text.Contains("Device: all"), "config must reset Device");
++        Check(text.Contains("Device: Speakers (Test Headphones)"), "config must scope to the chosen device");
++        Check(text.All(c => c < 128), "config should be plain ASCII for ASCII device names");
++        var surround = ApoConfig.BuildSurround("Test", 100, 0);
++        Check(surround.Contains("Channel: SL SR RL RR"), "surround chain should address the surround channels");
++        Check(surround.TrimEnd().EndsWith("Channel: all"), "surround config must reset scope");
++        Check(!surround.Contains("0,"), "surround numbers must use dots");
++    }
++    finally { System.Globalization.CultureInfo.CurrentCulture = oldCulture; }
++}
++
++// The preview comes from the real chain: the "after" clip must not clip.
++{
++    var (dry, wet) = ApoConfig.RenderPreview(Preset.Footsteps, 1.0);
++    Check(wet.Select(x => Math.Abs(x)).Max() < 1.0f, "preview 'after' clip must not clip");
++    Check(dry.Select(x => Math.Abs(x)).Max() < 1.0f, "preview 'before' clip must not clip");
++    Check(dry.Select(x => Math.Abs(x)).Max() > 0.1f, "preview 'before' clip should not be silent");
++}
++
++// Config store: install, switch off, conflicts, remove, and the user's file is kept safe.
++{
++    var dir = Path.Combine(Path.GetTempPath(), "jk-test-" + Guid.NewGuid().ToString("N"));
++    Directory.CreateDirectory(dir);
++    try
++    {
++        var main = Path.Combine(dir, "config.txt");
++        File.WriteAllText(main, "# mine\r\nPreamp: -3 dB\r\nVSTPlugin: Library rara.dll\r\nInclude: HeSuVi\\hesuvi.txt\r\n");
++        var original = File.ReadAllText(main);
++        var store = new ConfigStore(dir);
++        Check(!store.IsOn(), "store should start off");
++        Check(store.Write(ApoConfig.BuildStereo("Test", Preset.Footsteps, 0.5)), "write should work");
++        Check(store.IsOn(), "store should be on after write");
++        Check(File.ReadAllText(main).StartsWith(original.TrimEnd()), "the user's own lines must stay untouched");
++        Check(File.ReadAllText(main).Contains(ConfigStore.IncludeLine), "include line should be added");
++        Check(File.Exists(Path.Combine(dir, "config.txt.jesuskpekpes-backup")), "a one-time backup should exist");
++        Check(File.ReadAllText(Path.Combine(dir, "config.txt.jesuskpekpes-backup")) == original, "backup must equal the original");
++        Check(store.Write(ApoConfig.BuildStereo("Test", Preset.Everyday, 0.5)), "second write should work");
++        var includes = File.ReadAllLines(main).Count(l => l.Trim() == ConfigStore.IncludeLine);
++        Check(includes == 1, $"include line must exist once, found {includes}");
++        var found = store.Conflicts();
++        Check(found.Any(c => c.Contains("HeSuVi")), "HeSuVi should be reported");
++        Check(found.Any(c => c.Contains("VST")), "a VST chain should be reported");
++        Check(store.Off(), "off should work");
++        Check(!store.IsOn(), "store should be off after Off()");
++        Check(File.ReadAllText(main).Contains(ConfigStore.IncludeLine), "Off must not edit config.txt");
++        Check(store.Remove(), "remove should work");
++        Check(!Directory.Exists(Path.Combine(dir, ConfigStore.Folder)), "our folder should be gone");
++        Check(File.ReadAllText(main) == original || File.ReadAllText(main).TrimEnd() == original.TrimEnd(), "remove must restore the user's lines");
++
++        // Old versions wrote jesus-kpekpes.txt and an include for it. We clean that up.
++        File.WriteAllText(main, "Preamp: -3 dB\r\nInclude: jesus-kpekpes.txt\r\n");
++        File.WriteAllText(Path.Combine(dir, "jesus-kpekpes.txt"), "Device: Old\r\n");
++        Check(store.Write(ApoConfig.BuildStereo("Test", Preset.Footsteps, 0.5)), "write after legacy should work");
++        Check(!File.ReadAllText(main).Contains("jesus-kpekpes.txt"), "legacy include should be removed");
++        Check(!File.Exists(Path.Combine(dir, "jesus-kpekpes.txt")), "legacy file should be removed");
++    }
++    finally { Directory.Delete(dir, true); }
++}
++
+ Console.WriteLine("engine ok");
