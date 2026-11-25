@@ -101,6 +101,7 @@ Each AI takes one letter. Only edit the files you own.
 
 - 2026-11-25, Package E: audited PRs #12–#14 and read their GitHub Actions Check results. Merged B (#12) and D (#14), both with green engine and Windows checks. C (#13) is green but held for a hard-rule timing issue: its 480 ms before/after windows and two 100 ms protocol waits exceed one second before HID overhead. No real controller or hardware checklist was available.
 - 2026-11-25, Package E: added `FakeControllerLink` and console tests for B and, conditionally, C. The focused B/C fake suites passed against C's current PR source copied into a temporary worktree. The overall Linux runner still fails later at the existing `nova cinema: C and C# differ by 0.016184654` comparison, so a fully green local runner is not claimed. The Windows app build succeeded with two existing warnings; real controller and hardware checks remain untested.
+- 2026-11-25, Package E: PR #15's latest Check run (Actions run 45565306880) passed both `Check/engine` and `Check/windows`. PR #15 remains open for the owner to merge into `stick-centre`; PRs #12 and #14 are merged, and PR #13 remains held for the timing fix.
 
 ## Paste this to any AI you hand a package to
 
