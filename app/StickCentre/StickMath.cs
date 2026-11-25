@@ -53,7 +53,7 @@ static class StickMath
     // One stick, both axes. The wording says what a calibration can and cannot fix.
     public static StickVerdict Judge(AxisStats x, AxisStats y)
     {
-        if (x.Samples < 50 || y.Samples < 50)
+        if (x.Samples < 25 || y.Samples < 25)
             return new StickVerdict(false, false, false, "Not enough readings yet. Keep your hands off the stick and try again.");
         var radial = MathF.Sqrt(x.OffsetPercent * x.OffsetPercent + y.OffsetPercent * y.OffsetPercent);
         var centreOff = radial >= OffsetWarnPercent;
