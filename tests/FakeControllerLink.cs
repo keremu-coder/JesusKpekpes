@@ -26,10 +26,18 @@ internal sealed class FakeControllerLink : IControllerLink
     public string Model => DeviceModel;
     public bool IsUsb => Usb;
 
+    // Thread.Sleep(1) lasts about 15 ms on Windows, which made the fake slower than a real pad (about 250 reports a second) and starved
+    // the report-rate comparison. This waits the stated time exactly.
+    private static void Pause(double milliseconds)
+    {
+        var start = System.Diagnostics.Stopwatch.GetTimestamp();
+        while (System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds < milliseconds) Thread.SpinWait(50);
+    }
+
     public byte[]? ReadInputReport(int timeoutMs)
     {
         InputReads++;
-        Thread.Sleep(SlowAfterWrite && VolatileWrites > 0 ? 8 : 1);
+        Pause(SlowAfterWrite && VolatileWrites > 0 ? 8.0 : 2.0);
         var rightX = Values[RightXIndex] > 2000 ? (byte)128 : (byte)134;
         return [0x01, 128, 128, rightX, 128];
     }
