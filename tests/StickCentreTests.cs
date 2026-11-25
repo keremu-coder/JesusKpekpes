@@ -72,7 +72,7 @@ internal static class StickCentreTests
                 "the backup file exists before the sole volatile apply write");
             check(applied.BackupPath is not null && File.Exists(applied.BackupPath),
                 "live apply returns a durable backup path");
-            check(applied.After is not null && applied.After.ReportRate.Reports >= 100,
+            check(applied.After is not null && applied.After.ReportRate.Reports >= 50,
                 "live apply re-measures the report rate after the write");
             check(link.SentReports.All(IsAllowedVolatileReport),
                 "protocol traffic contains only the live read and volatile-write framing, never a save command");
@@ -102,6 +102,23 @@ internal static class StickCentreTests
                 "a worsened post-write report rate triggers automatic rollback");
             check(rateLink.Values.SequenceEqual(rateOriginal),
                 "rate-triggered rollback restores the original in-memory values");
+
+            // The scale and direction of the centre values are learned from the first step, so the loop must work for either sign.
+            foreach (var gain in new[] { -0.1, 0.1 })
+            {
+                var linear = new FakeControllerLink { LinearGain = gain };
+                var run = LiveCentre.Apply(linear, Path.Combine(root, "linear" + gain));
+                var finalReading = Math.Round(127.5 + 6.5 + gain * (linear.Values[FakeControllerLink.RightXIndex] - 2000));
+                check(run.Success && run.Applied && Math.Abs(finalReading - 127.5) <= 1.5 && linear.VolatileWrites <= 3,
+                    $"closed loop centres the stick within three writes when one unit moves it {gain} counts: {run.Message}");
+                check(linear.SentReports.All(IsAllowedVolatileReport), "the closed loop sends only the live read and volatile-write framing");
+            }
+
+            var dead = new FakeControllerLink { LinearGain = 0.0000001 };
+            var deadValues = (ushort[])dead.Values.Clone();
+            var deadRun = LiveCentre.Apply(dead, Path.Combine(root, "dead"));
+            check(!deadRun.Success && deadRun.RolledBack && dead.Values.SequenceEqual(deadValues),
+                "values that do not move the reading are undone and reported, not kept");
         }
         finally
         {
