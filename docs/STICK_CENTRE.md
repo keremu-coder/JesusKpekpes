@@ -2,6 +2,10 @@
 
 Branch: `stick-centre` in keremu-coder/JesusKpekpes. Never push to `main`. The owner decides about `main`.
 
+PUSH EARLY AND OFTEN. Work that is not pushed to GitHub is lost when your usage limit ends, and the owner
+cannot recover it. Push after every meaningful step, even if it is unfinished. If you cannot push, stop and
+tell the owner at once instead of carrying on.
+
 ## What we are building
 
 A "Stick centre" tab in Jesus Kpekpes that removes a resting stick spin the way the community
@@ -60,7 +64,9 @@ Each AI takes one letter. Only edit the files you own.
 
 ## Working together
 
-- Branch from `stick-centre` as `stick-centre/<letter>-<short-name>`, and open a PR back into `stick-centre`.
+- Branch names: Git cannot hold a branch called `stick-centre` and a branch called `stick-centre/x` at the same
+  time, so do NOT put a slash after `stick-centre`. Branch from `stick-centre` as `sc-<letter>-<short-name>`,
+  for example `sc-a-hid` or `sc-c-live`. Open a PR back into `stick-centre`.
 - Package E merges after CI is green. The owner decides about `main`.
 - Do not edit another package's files. If you need a change there, add an entry under "Requests" below.
 - CI is the `Check` workflow. It runs on every push. Read its result, do not guess.
@@ -93,12 +99,14 @@ Each AI takes one letter. Only edit the files you own.
 ## Progress log
 
 - 2026-11-25, Claude: created the branch, `StickMath`, `IControllerLink` and this file. The sandbox has no .NET, so none of it was compiled. The first Check run on the branch is the first real build result.
+- 2026-11-25, Claude: fixed the branch naming rule. The first version said `stick-centre/<letter>-<name>`, which Git cannot create while the branch `stick-centre` exists. Use `sc-<letter>-<name>`. A first AI's work was started before this and never reached GitHub, so nothing from it is on any branch.
 
 ## Paste this to any AI you hand a package to
 
 > You are joining a multi-AI build on the repo keremu-coder/JesusKpekpes, branch `stick-centre`.
 > Read `docs/STICK_CENTRE.md` completely, then take Work package <LETTER> and only edit the files it owns.
-> Follow the hard rules. Input delay and report rate come first. Work on a sub-branch and open a PR into
-> `stick-centre`. Never push to `main`. Read the Check result in GitHub Actions instead of assuming. Say what you tested and what
-> you could not. Update the status board and the progress log. Finish with a short report of files changed,
-> what passed, what failed, and what is blocked.
+> Follow the hard rules. Input delay and report rate come first. Work on a branch named `sc-<letter>-<name>`
+> (no slash after `stick-centre`) and open a PR into `stick-centre`. Never push to `main`. Push after every
+> meaningful step, because unpushed work is lost when your limit ends. Read the Check result in GitHub Actions
+> instead of assuming. Say what you tested and what you could not. Update the status board and the progress log.
+> Finish with a short report of files changed, what passed, what failed, and what is blocked.
