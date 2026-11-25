@@ -17,7 +17,18 @@
     <Compile Include="..\app\PcReport.cs" Link="PcReport.cs" />
     <Compile Include="..\app\Updater.cs" Link="Updater.cs" />
     <Compile Include="..\setup\LaunchNote.cs" Link="LaunchNote.cs" />
+    <Compile Include="..\app\StickCentre\IControllerLink.cs" Link="StickCentre\IControllerLink.cs" Condition="Exists('..\app\StickCentre\IControllerLink.cs')" />
+    <Compile Include="..\app\StickCentre\StickMath.cs" Link="StickCentre\StickMath.cs" Condition="Exists('..\app\StickCentre\StickMath.cs')" />
+    <Compile Include="..\app\StickCentre\StickTest.cs" Link="StickCentre\StickTest.cs" Condition="Exists('..\app\StickCentre\StickTest.cs')" />
+    <Compile Include="..\app\StickCentre\CentreProtocol.cs" Link="StickCentre\CentreProtocol.cs" Condition="Exists('..\app\StickCentre\CentreProtocol.cs')" />
+    <Compile Include="..\app\StickCentre\LiveCentre.cs" Link="StickCentre\LiveCentre.cs" Condition="Exists('..\app\StickCentre\LiveCentre.cs')" />
     <Using Include="JesusKpekpes" />
     <Using Include="JesusKpekpes.Setup" />
   </ItemGroup>
+  <PropertyGroup Condition="Exists('..\app\StickCentre\StickTest.cs')">
+    <DefineConstants>$(DefineConstants);STICK_CENTRE_B</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="Exists('..\app\StickCentre\StickTest.cs') And Exists('..\app\StickCentre\CentreProtocol.cs') And Exists('..\app\StickCentre\LiveCentre.cs')">
+    <DefineConstants>$(DefineConstants);STICK_CENTRE_C</DefineConstants>
+  </PropertyGroup>
 </Project>

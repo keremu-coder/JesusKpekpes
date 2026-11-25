@@ -20,6 +20,13 @@ static void Check(bool ok, string message)
     Environment.Exit(1);
 }
 
+#if STICK_CENTRE_B
+StickCentreTests.RunReadOnly(Check);
+#endif
+#if STICK_CENTRE_C
+StickCentreTests.RunLive(Check);
+#endif
+
 var click = Empty(4000);
 for (var i = 2000; i < 2120; i++)
 {
