@@ -116,6 +116,10 @@ Each AI takes one letter. Only edit the files you own.
   - Package E: tests for RestWatch with synthetic reports (quiet pad, held pad, both sticks off, offset too big, cooldown).
   - Open: whether a background read while a game runs is acceptable. It needs its own shared handle, and the owner decides after the hardware checklist shows the report rate is unchanged.
 
+- 2026-11-26, Package A (owner symptom: the stick sometimes snaps to an extreme or gives an instant 360 turn, and in the calibrator it sometimes rests perfectly and sometimes drifts to the end): added `app/StickCentre/GlitchTest.cs`. It is read-only and reads the pad's own input reports, so it can tell a fault in the controller from one in DS4Windows or the game. It counts moves of more than 40 counts from rest while the gyro says the pad was not bumped, and says plainly when the stick sensor is at fault. Check passed. Not run on hardware. A fault like this cannot be calibrated away; RestWatch deliberately ignores offsets above 14 counts.
+  - Package D: add a "Glitch capture (60 s, hands off)" button that calls `GlitchTest.Run`. It is user-started only, reads only, and sends no feature report. It runs far longer than one second, so the owner has to accept that for a read-only test, as with Package B.
+  - Package E: tests for `GlitchTest.Analyse` with synthetic samples: quiet pad, one false spike, a spike while the pad moves, a stick stuck at the end.
+
 ## Paste this to any AI you hand a package to
 
 > You are joining a multi-AI build on the repo keremu-coder/JesusKpekpes, branch `stick-centre`.
