@@ -76,7 +76,7 @@ Each AI takes one letter. Only edit the files you own.
 
 | Pkg | Status | Notes |
 |---|---|---|
-| A | not started | |
+| A | PR #16 open | Branch `sc-a-hid`. `WinHidLink` implements `IControllerLink` and registers itself as `StickCentreForm.OpenController`. Check/engine and Check/windows passed (it compiles). Never run against a real pad: hardware checklist items 1 to 7 are untested. |
 | B | merged; spec conflict unresolved | PR #12 Checks passed and the implementation is read-only, but its required five-second open sampling window conflicts with hard rule 1's under-one-second handle limit. The explicit B task says five seconds; owner resolution is needed before treating this as compliant or using the test on hardware. |
 | C | open; audit fix requested | PR #13 Checks pass, but apply/restore exceed the under-one-second hard limit: two 480 ms measurement windows plus two 100 ms protocol waits already total about 1.16 s before HID overhead. Not merged pending a bounded-time fix and test. |
 | D | merged; safety follow-up required | PR #14 Checks passed, but auto-apply defaults on and runs on open/reconnect with no guard for an active game, conflicting with the rule against feature-report traffic while gaming. UI still cannot reach a real controller until package A supplies `OpenController`. |
@@ -87,7 +87,8 @@ Each AI takes one letter. Only edit the files you own.
 - Package C: reduce the measured apply/restore path to comply with hard rule 1 (controller access well under one second), including feature-report waits and rate windows. Current source has two 480 ms windows and two 100 ms waits, so its minimum is already about 1.16 seconds. Add or run fake-link coverage for the bounded duration and re-run the Check workflow before requesting merge.
 - Package B / spec owner: resolve the conflict between B's required five-second input sample and hard rule 1's under-one-second open-handle bound. B reads input reports only and sends no feature reports, but it retains the controller link for the full five seconds.
 - Package D: prevent reconnect auto-apply from issuing feature reports while a game is active. The merged form enables auto-apply by default and has no game-active guard; package E does not own the form code. Review the default and safe activation policy before wiring package A/C into a usable build.
-- Package A: implement the HID link and expose the factory expected by the merged UI. Until then, `OpenController` is unset and the UI cannot operate a real DualSense.
+- Package A: done in PR #16 (see status board). Once it is merged, the UI reaches a real pad. Needs the owner to run hardware checklist items 1 and 2 first.
+- Package E: add tests for `HidRules` (`ModelFor`, `LooksUsb`, `Prefer`, `Explain`) in `tests/Program.cs`. They need no hardware.
 
 ## Hardware checklist (the owner runs this with the real DualSense Edge)
 
@@ -106,6 +107,18 @@ Each AI takes one letter. Only edit the files you own.
 - 2026-11-25, Package E: audited PRs #12–#14 and read their GitHub Actions Check results. B (#12) and D (#14) were merged after green checks; follow-up audit found unresolved hard-rule conflicts: B's five-second sampling window exceeds the generic handle bound, and D's default reconnect auto-apply has no game-active guard. C (#13) is green but held because its 480 ms before/after windows and two 100 ms protocol waits exceed one second before HID overhead. These findings are recorded for follow-up; no real controller or hardware checklist was available.
 - 2026-11-25, Package E: added `FakeControllerLink` and console tests for B and, conditionally, C. The focused B/C fake suites passed against C's current PR source copied into a temporary worktree. The overall Linux runner still fails later at the existing `nova cinema: C and C# differ by 0.016184654` comparison, so a fully green local runner is not claimed. The Windows app build succeeded with two existing warnings; real controller and hardware checks remain untested.
 - 2026-11-25, Package E: PR #15's final Check run on commit `f72d586` (Actions run 45565535579) passed both `Check/engine` and `Check/windows`. PR #15 remains open for the owner to merge into `stick-centre`; PRs #12 and #14 are merged with the follow-up issues above, and PR #13 remains held for the timing fix.
+
+- 2026-11-25, Package A: added `app/StickCentre/WinHidLink.cs`. A handle exists only between Open and Dispose; finding the pad uses a no-access handle to read vendor and product number; the pad is then opened with shared read and write, so DS4Windows keeps working; reads are overlapped and cancelled on timeout; opening sends no feature report; HidHide is detected from its service key and explained, never changed. No thread, timer or watcher. Check passed on both jobs. Not tested on a real DualSense Edge. USB is judged by the 64-byte input report and the device path; a clone with the same IDs would not be told apart.
+
+- 2026-11-26, Package A (owner request: fix a stick that suddenly stops returning to centre, with no added delay): added `app/StickCentre/RestWatch.cs`, a pure state machine fed with input reports. It says "stick stuck off centre" only after 3 s with no button, both triggers released, the gyro showing the pad lying still, the stick steady, and the offset between 2.5 and 14 counts. It opens nothing, has no thread and sends nothing. Limits are provisional. Not run on hardware. Check passed.
+  - Package C: expose one correction call, `ApplyRestCorrection(link, side, offsetX, offsetY)`: backup, one clamped adjustment, read-back, rate check, restore on any surprise, all under one second.
+  - Package D: an opt-in switch (off by default) that feeds RestWatch from reports the app already reads, and calls C only on a StuckOffCentre verdict. It must never send a feature report while the pad is in use (RestWatch returns Active for that).
+  - Package E: tests for RestWatch with synthetic reports (quiet pad, held pad, both sticks off, offset too big, cooldown).
+  - Open: whether a background read while a game runs is acceptable. It needs its own shared handle, and the owner decides after the hardware checklist shows the report rate is unchanged.
+
+- 2026-11-26, Package A (owner symptom: the stick sometimes snaps to an extreme or gives an instant 360 turn, and in the calibrator it sometimes rests perfectly and sometimes drifts to the end): added `app/StickCentre/GlitchTest.cs`. It is read-only and reads the pad's own input reports, so it can tell a fault in the controller from one in DS4Windows or the game. It counts moves of more than 40 counts from rest while the gyro says the pad was not bumped, and says plainly when the stick sensor is at fault. Check passed. Not run on hardware. A fault like this cannot be calibrated away; RestWatch deliberately ignores offsets above 14 counts.
+  - Package D: add a "Glitch capture (60 s, hands off)" button that calls `GlitchTest.Run`. It is user-started only, reads only, and sends no feature report. It runs far longer than one second, so the owner has to accept that for a read-only test, as with Package B.
+  - Package E: tests for `GlitchTest.Analyse` with synthetic samples: quiet pad, one false spike, a spike while the pad moves, a stick stuck at the end.
 
 ## Paste this to any AI you hand a package to
 
