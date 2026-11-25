@@ -17,7 +17,7 @@ sealed class HomeForm : Form
         MaximizeBox = false;
         MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 680);
+        ClientSize = new Size(460, 740);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 11f);
@@ -41,13 +41,14 @@ sealed class HomeForm : Form
         var check = Button("Sound check (compare two tunes)", 406, () => Open(new SoundCheckForm()));
         var bench = Button("Monitor and frames", 470, () => Open(new BenchForm()));
         var startup = Button("Startup menu", 534, () => Open(new StartupForm()));
-        _update = Button("Update", 592, StartUpdate);
+        var stickCentre = Button("Stick centre", 592, () => Open(new StickCentreForm()));
+        _update = Button("Update", 646, StartUpdate);
         _update.Visible = false;
         _ver.Text = "Version " + Updater.Current().ToString(3);
         _ver.Font = new Font("Segoe UI", 8.5f);
         _ver.ForeColor = Color.FromArgb(196, 184, 165);
-        _ver.Bounds = new Rectangle(28, 646, 404, 32);
-        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup, _update, _ver]);
+        _ver.Bounds = new Rectangle(28, 700, 404, 32);
+        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup, stickCentre, _update, _ver]);
         _tray.Icon = Window.Mark;
         _tray.Text = "Jesus Kpekpes";
         _tray.Visible = true;
