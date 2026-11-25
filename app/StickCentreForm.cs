@@ -24,10 +24,11 @@ sealed class StickCentreForm : Form
     internal static Func<IControllerLink?>? OpenController { get; set; }
 
     private readonly Label _status = new();
-    private readonly CheckBox _autoApply = new() { Text = "Auto-apply when this window opens or the controller reconnects" };
+    private readonly CheckBox _autoApply = new() { Text = "Auto-apply when this window opens or the controller reconnects (only if the pad is untouched)" };
     private readonly Button _test = new() { Text = "Test (hands off for 5 seconds)" };
     private readonly Button _apply = new() { Text = "Apply my centre" };
     private readonly Button _restore = new() { Text = "Restore from backup…" };
+    private readonly Button _glitch = new() { Text = "Glitch capture (60 s, hands off)" };
     private readonly Label _backup = new();
     private IntPtr _notification;
     private string? _lastBackupPath;
@@ -50,7 +51,7 @@ sealed class StickCentreForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(560, 340);
+        ClientSize = new Size(560, 400);
         Font = new Font("Segoe UI", 10.5f);
 
         var title = new Label
@@ -71,16 +72,18 @@ sealed class StickCentreForm : Form
         Style(_test, 24, 156, 240);
         Style(_apply, 280, 156, 240);
         Style(_restore, 24, 204, 240);
+        Style(_glitch, 24, 252, 496);
+        _glitch.Click += async (_, _) => await RunOperation(Operation.Glitch);
         _test.Click += async (_, _) => await RunOperation(Operation.Test);
         _apply.Click += async (_, _) => await RunOperation(Operation.Apply);
         _restore.Click += (_, _) => PickAndRestore();
         _backup.SetBounds(280, 207, 252, 38);
         _backup.ForeColor = Color.FromArgb(180, 184, 198);
         _backup.Text = "No backup selected";
-        _status.SetBounds(24, 258, 510, 65);
+        _status.SetBounds(24, 304, 510, 86);
         _status.ForeColor = Color.FromArgb(180, 184, 198);
         _status.Text = "Ready. No controller access occurs until an action runs.";
-        Controls.AddRange([title, explanation, _autoApply, _test, _apply, _restore, _backup, _status]);
+        Controls.AddRange([title, explanation, _autoApply, _test, _apply, _restore, _backup, _glitch, _status]);
 
         _lastBackupPath = ReadLastBackup();
         UpdateBackupLabel();
@@ -90,7 +93,7 @@ sealed class StickCentreForm : Form
         };
     }
 
-    private enum Operation { Test, Apply, Restore }
+    private enum Operation { Test, Apply, Restore, Glitch }
 
     private async Task RunOperation(Operation operation, bool automatic = false, string? restorePath = null)
     {
@@ -101,6 +104,7 @@ sealed class StickCentreForm : Form
         _status.Text = operation switch
         {
             Operation.Test => "Testing. Leave both sticks untouched for five seconds…",
+            Operation.Glitch => "Watching for 60 seconds. Put the controller down and do not touch it…",
             Operation.Apply when automatic => "Auto-applying the saved live centre. No controller storage is changed…",
             Operation.Apply => "Measuring and applying a small live centre correction…",
             _ => "Restoring the selected backup in memory…",
@@ -137,6 +141,15 @@ sealed class StickCentreForm : Form
         using var link = factory();
         if (link is null)
             return ("No supported DualSense controller is available over USB. Connect it by USB and try again.", null);
+
+        if (automatic)
+        {
+            // Nothing that runs by itself may send anything to a pad that is being used.
+            var quiet = PadQuiet.Check(link);
+            if (!quiet.Quiet) return (quiet.Message, null);
+        }
+
+        if (operation == Operation.Glitch) return (GlitchTest.Run(link).PlainLanguage, null);
 
         var assembly = typeof(StickCentreForm).Assembly;
         if (operation == Operation.Test)
@@ -242,6 +255,7 @@ sealed class StickCentreForm : Form
         _test.Enabled = enabled;
         _apply.Enabled = enabled;
         _restore.Enabled = enabled;
+        _glitch.Enabled = enabled;
     }
 
     private void UpdateBackupLabel() => _backup.Text = File.Exists(_lastBackupPath)
@@ -272,9 +286,9 @@ sealed class StickCentreForm : Form
         try
         {
             var map = ReadSettings();
-            return !map.TryGetValue("autoApply", out var value) || value != "0";
+            return map.TryGetValue("autoApply", out var value) && value == "1";
         }
-        catch (Exception) { return true; }
+        catch (Exception) { return false; }
     }
 
     private static string? ReadLastBackup()

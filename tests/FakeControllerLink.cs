@@ -22,6 +22,8 @@ internal sealed class FakeControllerLink : IControllerLink
     internal bool InvalidAnswerHeader { get; set; }
     internal bool ReturnBadDeviceInfo { get; set; }
     internal bool Usb { get; set; } = true;
+    // 0 keeps the simple two-state model. Otherwise the right stick reads 6.5 counts off centre and moves by LinearGain counts per unit written.
+    internal double LinearGain { get; set; }
     internal string DeviceModel { get; set; } = "DualSense Edge";
     public string Model => DeviceModel;
     public bool IsUsb => Usb;
@@ -38,7 +40,9 @@ internal sealed class FakeControllerLink : IControllerLink
     {
         InputReads++;
         Pause(SlowAfterWrite && VolatileWrites > 0 ? 8.0 : 2.0);
-        var rightX = Values[RightXIndex] > 2000 ? (byte)128 : (byte)134;
+        var rightX = LinearGain != 0
+            ? (byte)Math.Clamp(Math.Round(127.5 + 6.5 + LinearGain * (Values[RightXIndex] - 2000)), 0, 255)
+            : Values[RightXIndex] > 2000 ? (byte)128 : (byte)134;
         return [0x01, 128, 128, rightX, 128];
     }
 

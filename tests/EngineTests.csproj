@@ -22,6 +22,10 @@
     <Compile Include="..\app\StickCentre\StickTest.cs" Link="StickCentre\StickTest.cs" Condition="Exists('..\app\StickCentre\StickTest.cs')" />
     <Compile Include="..\app\StickCentre\CentreProtocol.cs" Link="StickCentre\CentreProtocol.cs" Condition="Exists('..\app\StickCentre\CentreProtocol.cs')" />
     <Compile Include="..\app\StickCentre\LiveCentre.cs" Link="StickCentre\LiveCentre.cs" Condition="Exists('..\app\StickCentre\LiveCentre.cs')" />
+    <Compile Include="..\app\StickCentre\RestWatch.cs" Link="StickCentre\RestWatch.cs" />
+    <Compile Include="..\app\StickCentre\GlitchTest.cs" Link="StickCentre\GlitchTest.cs" />
+    <Compile Include="..\app\StickCentre\HidRules.cs" Link="StickCentre\HidRules.cs" />
+    <Compile Include="..\app\StickCentre\PadQuiet.cs" Link="StickCentre\PadQuiet.cs" />
     <Using Include="JesusKpekpes" />
     <Using Include="JesusKpekpes.Setup" />
   </ItemGroup>
