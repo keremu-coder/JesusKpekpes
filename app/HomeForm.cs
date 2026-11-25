@@ -17,7 +17,7 @@ sealed class HomeForm : Form
         MaximizeBox = false;
         MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 680);
+        ClientSize = new Size(460, 744);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 11f);
@@ -40,14 +40,15 @@ sealed class HomeForm : Form
         var cod = Button("Call of Duty settings", 342, () => Open(new CodForm()));
         var check = Button("Sound check (compare two tunes)", 406, () => Open(new SoundCheckForm()));
         var bench = Button("Monitor and frames", 470, () => Open(new BenchForm()));
-        var startup = Button("Startup menu", 534, () => Open(new StartupForm()));
-        _update = Button("Update", 592, StartUpdate);
+        var sticks = Button("Stick centre", 534, () => Open(new StickCentreForm()));
+        var startup = Button("Startup menu", 598, () => Open(new StartupForm()));
+        _update = Button("Update", 656, StartUpdate);
         _update.Visible = false;
         _ver.Text = "Version " + Updater.Current().ToString(3);
         _ver.Font = new Font("Segoe UI", 8.5f);
         _ver.ForeColor = Color.FromArgb(196, 184, 165);
-        _ver.Bounds = new Rectangle(28, 646, 404, 32);
-        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup, _update, _ver]);
+        _ver.Bounds = new Rectangle(28, 710, 404, 32);
+        Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, sticks, startup, _update, _ver]);
         _tray.Icon = Window.Mark;
         _tray.Text = "Jesus Kpekpes";
         _tray.Visible = true;
@@ -130,6 +131,25 @@ sealed class HomeForm : Form
                 if (!IsDisposed) _update.Enabled = true;
             }
         }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        StickLink.Listen(Handle);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (StickLink.Arrival(m.Msg, m.WParam, m.LParam))
+            StickLink.ReapplyStoredAsync();
+        base.WndProc(ref m);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        StickLink.Silence();
+        base.OnFormClosed(e);
     }
 
     void Open(Form form)

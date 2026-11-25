@@ -43,6 +43,9 @@ Those numbers are the comparison. They are not a lab meter and they are not LUFS
 The plug-in
 plugin/NOTICE.txt is the license finding. The short version: this code does not include Steinberg's SDK, and that is not a Steinberg license. Do not sell it as a VST product until a lawyer has looked at it.
 
+Stick centre
+Home, Stick centre. USB DualSense or DualSense Edge only. It reads the resting sticks, then can write the centre in the pad's memory. It does not save that to the controller. STICK-CENTRE.txt is the list to run on a real Edge.
+
 Screenshots
 Take these on your PC after a real run. Do not draw them.
 The home window.

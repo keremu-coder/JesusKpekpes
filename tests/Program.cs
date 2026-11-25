@@ -1182,4 +1182,5 @@ Check(LaunchNote.Blocked(blocked) && LaunchNote.AfterInstall(blocked).StartsWith
     "a policy block means the copy is in place and Windows refused to start it");
 Check(LaunchNote.AfterInstall(new InvalidOperationException("disk full")).Contains("did not open", StringComparison.Ordinal), "a different launch error stays a different sentence");
 
+StickChecks.Run();
 Console.WriteLine("engine ok");

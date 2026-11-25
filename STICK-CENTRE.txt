@@ -1,0 +1,18 @@
+Stick centre — check this on a real DualSense Edge
+
+Do this on the PC you play on, with the Edge on a data USB cable and DS4Windows open.
+Hands off both sticks for every read. Bluetooth is supposed to be refused. Nothing in this list saves to the controller's flash.
+
+1. Plug the Edge in over USB. Open Jesus Kpekpes, Stick centre. If the text says Bluetooth, the cable is charge-only or the pad is paired over radio. Fix that before anything else.
+2. If the text names HidHide, add JesusKpekpes.exe in HidHide's Applications list. Do not remove the Edge from HidHide's devices. This program does not change HidHide.
+3. Press Read resting sticks (5 s). Leave the sticks alone. Copy the whole text.
+   The left and right lines should say either a wrong centre, a worn stick, both, or already at the centre.
+   Note the report rate and the worst gap.
+4. Press Apply centre in memory. Copy the whole text, including the before and after rate.
+   If the rate dropped or the worst gap grew by more than 10%, the text must say the backup was written back. Play a minute and confirm the camera is as it was.
+   If it kept the write, confirm the steady spin is gone or smaller, then close the window and play. The program must not still have the pad open.
+5. Unplug the Edge and plug it back into the same USB port. Open Stick centre again. The stored centre should be written once, then the handle closes. Copy that text.
+6. Press Restore backup. The rest point should go back to the pre-write values. Copy the text. The controller should not ask you to re-pair, and DS4Windows should still see the pad.
+7. Optional: connect the Edge over Bluetooth on purpose. The window must refuse it and must not write.
+
+What this PC could not check: a real Edge, DS4Windows, and HidHide were not attached here. The checks that ran are the ones in tests/StickChecks.cs. Steps 1 to 7 are the hardware pass.
