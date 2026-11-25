@@ -80,7 +80,7 @@ Each AI takes one letter. Only edit the files you own.
 | B | merged to `stick-centre` | PR #12 merged after both Check jobs passed and read-only USB/model audit; fake-link five-second test is in package E. |
 | C | open; audit fix requested | PR #13 Checks pass, but apply/restore exceed the under-one-second hard limit: two 480 ms measurement windows plus two 100 ms protocol waits already total about 1.16 s before HID overhead. Not merged pending a bounded-time fix and test. |
 | D | merged to `stick-centre` | PR #14 merged after both Check jobs passed; UI remains unable to reach a real controller until package A supplies `OpenController`. |
-| E | in progress | Branch `sc-e-tests`; fake link and conditional B/C tests pushed. Local runner compiled and the B fake test completed, then an unrelated existing `nova cinema` C/C# comparison failed. |
+| E | PR #15 open | Branch `sc-e-tests`; fake link and conditional B/C tests pushed. Focused B/C fake suites passed against the open C source in a temporary worktree; app build succeeded. The full Linux runner still stops later at an unrelated existing `nova cinema` C/C# comparison. |
 
 ## Requests (between packages)
 
@@ -100,7 +100,7 @@ Each AI takes one letter. Only edit the files you own.
 ## Progress log
 
 - 2026-11-25, Package E: audited PRs #12–#14 and read their GitHub Actions Check results. Merged B (#12) and D (#14), both with green engine and Windows checks. C (#13) is green but held for a hard-rule timing issue: its 480 ms before/after windows and two 100 ms protocol waits exceed one second before HID overhead. No real controller or hardware checklist was available.
-- 2026-11-25, Package E: added `FakeControllerLink` and console tests for B and, conditionally, C. The test project compiled; the B five-second fake test completed without a failed assertion. The overall Linux runner then failed later at the existing `nova cinema: C and C# differ by 0.016184654` check, so a fully green local test run is not claimed. C tests remain conditional until its files land; app build and hardware checks remain untested.
+- 2026-11-25, Package E: added `FakeControllerLink` and console tests for B and, conditionally, C. The focused B/C fake suites passed against C's current PR source copied into a temporary worktree. The overall Linux runner still fails later at the existing `nova cinema: C and C# differ by 0.016184654` comparison, so a fully green local runner is not claimed. The Windows app build succeeded with two existing warnings; real controller and hardware checks remain untested.
 
 ## Paste this to any AI you hand a package to
 
