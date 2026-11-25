@@ -7,9 +7,11 @@ namespace JesusKpekpes;
 // The caller owns the short-lived IControllerLink; this class never disposes it.
 internal static class LiveCentre
 {
-    private static readonly TimeSpan RateWindow = TimeSpan.FromMilliseconds(480);
+    // Keep both rate windows plus two protocol response waits below one second.
+    // At 250 ms per sample window and 100 ms per response, expected work is about 700 ms.
+    private static readonly TimeSpan RateWindow = TimeSpan.FromMilliseconds(250);
     private const int ReadTimeoutCapMs = 50;
-    private const int MinReportsForRateComparison = 100;
+    private const int MinReportsForRateComparison = 50;
     private const int CentreStep = 5;
     private const int MaxAxisAdjustments = 3;
     private const byte UsbInputReportId = 0x01;
