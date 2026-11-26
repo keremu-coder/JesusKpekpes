@@ -1,10 +1,14 @@
+using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace JesusKpekpes;
 
 /// <summary>
-/// Explicitly operated stick-centre UI. Controller access occurs only during a requested test,
-/// apply, or restore, plus the requested one-shot auto-apply on open/HID arrival. No timer polls.
+/// Explicitly operated stick-centre UI. Controller access occurs only during a requested test, apply, restore or glitch
+/// capture, the requested one-shot auto-apply on open or HID arrival, and the optional live view. The live view is started
+/// by the person, reads input reports only (no feature report is ever sent), and stops by itself when this window loses
+/// focus or closes, so it cannot run while a game is in front. No timer runs unless the live view is on.
 /// </summary>
 sealed class StickCentreForm : Form
 {
@@ -12,6 +16,8 @@ sealed class StickCentreForm : Form
     private const int DbtDeviceArrival = 0x8000;
     private const int DbtDevTypeDeviceInterface = 5;
     private const int DeviceNotifyWindowHandle = 0;
+    private const string LiveStartText = "Start live view";
+    private const string LiveStopText = "Stop live view";
     private static readonly Guid HidInterfaceGuid = new("4D1E55B2-F16F-11CF-88CB-001111000030");
     private static readonly string BackupDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -19,17 +25,43 @@ sealed class StickCentreForm : Form
     private static readonly string SettingsPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "JesusKpekpes", "stick-centre.txt");
+    private static readonly Color Muted = Color.FromArgb(180, 184, 198);
+    private static readonly Color CardColor = Color.FromArgb(18, 20, 28);
+    private static readonly Color Good = Color.FromArgb(60, 216, 124);
+    private static readonly Color Amber = Color.FromArgb(255, 176, 0);
 
     // Package A supplies the short-lived link factory when that package lands.
     internal static Func<IControllerLink?>? OpenController { get; set; }
 
-    private readonly Label _status = new();
+    private readonly TextBox _status = new();
     private readonly CheckBox _autoApply = new() { Text = "Auto-apply when this window opens or the controller reconnects (only if the pad is untouched)" };
     private readonly Button _test = new() { Text = "Test (hands off for 5 seconds)" };
     private readonly Button _apply = new() { Text = "Apply my centre" };
     private readonly Button _restore = new() { Text = "Restore from backup…" };
     private readonly Button _glitch = new() { Text = "Glitch capture (60 s, hands off)" };
+    private readonly Button _live = new() { Text = LiveStartText };
+    private readonly CheckBox _zoom = new() { Text = "Zoom ×8" };
+    private readonly Label _rate = new();
     private readonly Label _backup = new();
+    private readonly StickDial _leftDial = new();
+    private readonly StickDial _rightDial = new();
+    private readonly Label _leftName = new();
+    private readonly Label _leftNumbers = new();
+    private readonly Label _leftState = new();
+    private readonly Label _rightName = new();
+    private readonly Label _rightNumbers = new();
+    private readonly Label _rightState = new();
+    private readonly System.Windows.Forms.Timer _liveTimer = new() { Interval = 33 };
+    private CancellationTokenSource? _liveCts;
+    private Task? _liveTask;
+    private string? _liveNote;
+    private int _lx = 128;
+    private int _ly = 128;
+    private int _rx = 128;
+    private int _ry = 128;
+    private long _reports;
+    private long _lastReports;
+    private long _lastRateAt;
     private IntPtr _notification;
     private string? _lastBackupPath;
     private bool _busy;
@@ -51,39 +83,83 @@ sealed class StickCentreForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(560, 400);
+        ClientSize = new Size(700, 700);
+        BackColor = Color.FromArgb(7, 9, 15);
+        ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 10.5f);
 
         var title = new Label
         {
             Text = "Stick centre",
             Font = new Font("Segoe UI", 19f, FontStyle.Bold),
-            Bounds = new Rectangle(24, 18, 500, 34),
+            Bounds = new Rectangle(24, 14, 652, 36),
         };
         var explanation = new Label
         {
-            Text = "USB only. Keep both sticks untouched during the test. Apply changes only in memory; nothing is saved into the controller.",
-            Bounds = new Rectangle(24, 62, 510, 48),
-            ForeColor = Color.FromArgb(180, 184, 198),
+            Text = "See where each stick rests, and fix a wrong centre in memory. USB only. Nothing is saved into the controller, and the live view never runs while another window is in front.",
+            Bounds = new Rectangle(24, 52, 652, 42),
+            ForeColor = Muted,
         };
-        _autoApply.SetBounds(24, 116, 510, 28);
+
+        var card = new Panel { Bounds = new Rectangle(24, 98, 652, 292), BackColor = CardColor };
+        BuildStickColumn(card, "Left stick", 40, _leftDial, _leftName, _leftNumbers, _leftState);
+        BuildStickColumn(card, "Right stick", 412, _rightDial, _rightName, _rightNumbers, _rightState);
+        _rate.SetBounds(252, 56, 148, 64);
+        _rate.TextAlign = ContentAlignment.MiddleCenter;
+        _rate.ForeColor = Muted;
+        _rate.Text = "Reports per second" + Environment.NewLine + "—";
+        Style(_live, new Rectangle(16, 250, 210, 36), primary: false);
+        _zoom.SetBounds(240, 255, 130, 28);
+        _zoom.ForeColor = Muted;
+        var liveHint = new Label
+        {
+            Text = "Reads the controller's own reports. Sends nothing.",
+            Bounds = new Rectangle(380, 250, 260, 38),
+            ForeColor = Muted,
+            Font = new Font("Segoe UI", 9f),
+        };
+        card.Controls.AddRange([_rate, _live, _zoom, liveHint]);
+        ShowIdle();
+
+        Style(_test, new Rectangle(24, 404, 318, 40), primary: true);
+        Style(_apply, new Rectangle(358, 404, 318, 40), primary: true);
+        Style(_restore, new Rectangle(24, 452, 318, 40), primary: false);
+        Style(_glitch, new Rectangle(358, 452, 318, 40), primary: false);
+        _autoApply.SetBounds(24, 502, 652, 40);
+        _autoApply.ForeColor = Muted;
         _autoApply.Checked = ReadAutoApply();
         _autoApply.CheckedChanged += (_, _) => SaveSettings();
-        Style(_test, 24, 156, 240);
-        Style(_apply, 280, 156, 240);
-        Style(_restore, 24, 204, 240);
-        Style(_glitch, 24, 252, 496);
+        _backup.SetBounds(24, 544, 652, 22);
+        _backup.ForeColor = Muted;
+        _backup.Text = "No backup selected";
+        _status.SetBounds(24, 572, 652, 112);
+        _status.Multiline = true;
+        _status.ReadOnly = true;
+        _status.ScrollBars = ScrollBars.Vertical;
+        _status.BorderStyle = BorderStyle.None;
+        _status.BackColor = CardColor;
+        _status.ForeColor = Color.FromArgb(242, 243, 245);
+        _status.Font = new Font("Segoe UI", 10f);
+        Say("Ready. No controller access occurs until you press a button.");
+
+        _live.Click += async (_, _) =>
+        {
+            if (_liveTask is null) StartLive();
+            else await StopLiveAsync("Live view stopped. Nothing was sent to the controller.");
+        };
+        _zoom.CheckedChanged += (_, _) =>
+        {
+            var factor = _zoom.Checked ? 8f : 1f;
+            _leftDial.Zoom = factor;
+            _rightDial.Zoom = factor;
+        };
+        _liveTimer.Tick += (_, _) => LiveTick();
         _glitch.Click += async (_, _) => await RunOperation(Operation.Glitch);
         _test.Click += async (_, _) => await RunOperation(Operation.Test);
         _apply.Click += async (_, _) => await RunOperation(Operation.Apply);
         _restore.Click += (_, _) => PickAndRestore();
-        _backup.SetBounds(280, 207, 252, 38);
-        _backup.ForeColor = Color.FromArgb(180, 184, 198);
-        _backup.Text = "No backup selected";
-        _status.SetBounds(24, 304, 510, 86);
-        _status.ForeColor = Color.FromArgb(180, 184, 198);
-        _status.Text = "Ready. No controller access occurs until an action runs.";
-        Controls.AddRange([title, explanation, _autoApply, _test, _apply, _restore, _backup, _glitch, _status]);
+
+        Controls.AddRange([title, explanation, card, _test, _apply, _restore, _glitch, _autoApply, _backup, _status]);
 
         _lastBackupPath = ReadLastBackup();
         UpdateBackupLabel();
@@ -95,25 +171,221 @@ sealed class StickCentreForm : Form
 
     private enum Operation { Test, Apply, Restore, Glitch }
 
+    private static void BuildStickColumn(Panel card, string name, int left, StickDial dial, Label caption, Label numbers, Label state)
+    {
+        dial.Bounds = new Rectangle(left + 20, 12, 160, 160);
+        caption.Text = name;
+        caption.Font = new Font("Segoe UI", 11f, FontStyle.Bold);
+        caption.TextAlign = ContentAlignment.MiddleCenter;
+        caption.Bounds = new Rectangle(left, 176, 200, 24);
+        numbers.Font = new Font("Consolas", 10.5f);
+        numbers.TextAlign = ContentAlignment.MiddleCenter;
+        numbers.Bounds = new Rectangle(left, 200, 200, 24);
+        state.TextAlign = ContentAlignment.MiddleCenter;
+        state.Bounds = new Rectangle(left, 224, 200, 24);
+        card.Controls.AddRange([dial, caption, numbers, state]);
+    }
+
+    private void ShowIdle()
+    {
+        foreach (var (dial, numbers, state) in new[] { (_leftDial, _leftNumbers, _leftState), (_rightDial, _rightNumbers, _rightState) })
+        {
+            dial.SetPosition(0f, 0f, false);
+            numbers.Text = "X —     Y —";
+            state.Text = "Live view is off";
+            state.ForeColor = Muted;
+        }
+    }
+
+    // ---- live view: input reports only, started by the person, stops by itself ----
+
+    private void StartLive()
+    {
+        if (_liveTask is not null || _busy || IsDisposed) return;
+        var factory = OpenController;
+        if (factory is null)
+        {
+            Say("Controller access is not available in this build.");
+            return;
+        }
+        _liveNote = null;
+        Interlocked.Exchange(ref _reports, 0);
+        _lastReports = 0;
+        _lastRateAt = Environment.TickCount64;
+        var cts = new CancellationTokenSource();
+        _liveCts = cts;
+        _live.Text = LiveStopText;
+        Say("Live view is on. It reads the controller's own reports and sends nothing. Click another window and it stops by itself.");
+        _liveTask = Task.Run(() => LiveLoop(factory, cts.Token));
+        _liveTimer.Start();
+    }
+
+    // Runs on a worker thread only while the live view is on. It reads input reports and nothing else.
+    private void LiveLoop(Func<IControllerLink?> factory, CancellationToken token)
+    {
+        string? problem = null;
+        IControllerLink? link = null;
+        try
+        {
+            link = factory();
+            if (link is null)
+            {
+                problem = "No supported DualSense controller is available over USB. Connect it by USB and try again.";
+                return;
+            }
+            var lastGood = Stopwatch.GetTimestamp();
+            while (!token.IsCancellationRequested)
+            {
+                var report = link.ReadInputReport(50);
+                if (report is null || report.Length < 5 || report[0] != 0x01)
+                {
+                    if (Stopwatch.GetElapsedTime(lastGood).TotalSeconds > 2)
+                    {
+                        problem = "No reports arrived for 2 seconds. Is the controller still connected by USB?";
+                        return;
+                    }
+                    continue;
+                }
+                lastGood = Stopwatch.GetTimestamp();
+                Volatile.Write(ref _lx, report[1]);
+                Volatile.Write(ref _ly, report[2]);
+                Volatile.Write(ref _rx, report[3]);
+                Volatile.Write(ref _ry, report[4]);
+                Interlocked.Increment(ref _reports);
+            }
+        }
+        catch (Exception ex)
+        {
+            problem = "Live view stopped: " + ex.Message;
+        }
+        finally
+        {
+            try { link?.Dispose(); } catch (Exception) { /* the handle is closed either way */ }
+            var note = problem ?? _liveNote ?? "Live view stopped. Nothing was sent to the controller.";
+            PostToUi(() => FinishLive(note));
+        }
+    }
+
+    private async Task StopLiveAsync(string note)
+    {
+        var task = _liveTask;
+        if (task is null) return;
+        _liveNote = note;
+        try { _liveCts?.Cancel(); } catch (ObjectDisposedException) { }
+        try { await task.WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch (Exception) { /* the loop reports its own problems through FinishLive */ }
+        FinishLive(note);
+    }
+
+    private void FinishLive(string note)
+    {
+        if (_liveTask is null) return;
+        _liveTimer.Stop();
+        _liveTask = null;
+        _liveCts?.Dispose();
+        _liveCts = null;
+        _live.Text = LiveStartText;
+        _rate.Text = "Reports per second" + Environment.NewLine + "—";
+        ShowIdle();
+        if (!IsDisposed) Say(note);
+    }
+
+    private void LiveTick()
+    {
+        UpdateStick(_leftDial, _leftNumbers, _leftState, Volatile.Read(ref _lx), Volatile.Read(ref _ly));
+        UpdateStick(_rightDial, _rightNumbers, _rightState, Volatile.Read(ref _rx), Volatile.Read(ref _ry));
+        var now = Environment.TickCount64;
+        if (now - _lastRateAt < 1000) return;
+        var total = Interlocked.Read(ref _reports);
+        var perSecond = (total - _lastReports) * 1000.0 / (now - _lastRateAt);
+        _lastReports = total;
+        _lastRateAt = now;
+        _rate.Text = "Reports per second" + Environment.NewLine + perSecond.ToString("0", CultureInfo.InvariantCulture);
+    }
+
+    private static void UpdateStick(StickDial dial, Label numbers, Label state, int rawX, int rawY)
+    {
+        var x = (rawX - StickMath.Rest) / StickMath.Rest;
+        var y = (rawY - StickMath.Rest) / StickMath.Rest;
+        dial.SetPosition(x, y, true);
+        numbers.Text = "X " + x.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture)
+            + "   Y " + y.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture);
+        var percent = MathF.Sqrt(x * x + y * y) * 100f;
+        if (percent < StickMath.OffsetWarnPercent)
+        {
+            state.Text = "At centre";
+            state.ForeColor = Good;
+        }
+        else if (percent < 15f)
+        {
+            state.Text = "Off centre by " + percent.ToString("0.0", CultureInfo.InvariantCulture) + "%";
+            state.ForeColor = Amber;
+        }
+        else
+        {
+            state.Text = "Stick is being moved";
+            state.ForeColor = Muted;
+        }
+    }
+
+    private void PostToUi(Action action)
+    {
+        try
+        {
+            if (!IsDisposed && IsHandleCreated) BeginInvoke(action);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+            // The window is already closing. The worker has closed the controller either way.
+        }
+    }
+
+    // Clicking another window, such as the game, stops the live view. It can never run while you play.
+    protected override void OnDeactivate(EventArgs e)
+    {
+        base.OnDeactivate(e);
+        if (_liveTask is not null)
+            _ = StopLiveAsync("Live view stopped because you left this window. It cannot run while another window, such as your game, is in front.");
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        _liveNote = null;
+        try { _liveCts?.Cancel(); } catch (ObjectDisposedException) { }
+        _liveTimer.Stop();
+        base.OnFormClosing(e);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _liveTimer.Dispose();
+        base.OnFormClosed(e);
+    }
+
+    // ---- test, apply, restore, glitch capture ----
+
     private async Task RunOperation(Operation operation, bool automatic = false, string? restorePath = null)
     {
         if (_busy || IsDisposed) return;
         if (operation == Operation.Restore && string.IsNullOrWhiteSpace(restorePath)) return;
         _busy = true;
         SetButtons(false);
-        _status.Text = operation switch
-        {
-            Operation.Test => "Testing. Leave both sticks untouched for five seconds…",
-            Operation.Glitch => "Watching for 60 seconds. Put the controller down and do not touch it…",
-            Operation.Apply when automatic => "Auto-applying the saved live centre. No controller storage is changed…",
-            Operation.Apply => "Measuring and applying a small live centre correction…",
-            _ => "Restoring the selected backup in memory…",
-        };
         try
         {
+            // Only one thing may hold the controller at a time. The live view steps aside first.
+            if (_liveTask is not null) await StopLiveAsync("Live view stopped.");
+            if (IsDisposed) return;
+            Say(operation switch
+            {
+                Operation.Test => "Testing. Leave both sticks untouched for five seconds…",
+                Operation.Glitch => "Watching for 60 seconds. Put the controller down and do not touch it…",
+                Operation.Apply when automatic => "Auto-applying the saved live centre. No controller storage is changed…",
+                Operation.Apply => "Measuring and applying a small live centre correction…",
+                _ => "Restoring the selected backup in memory…",
+            });
             var message = await Task.Run(() => RunBackend(operation, automatic, restorePath));
             if (IsDisposed) return;
-            _status.Text = message.Status;
+            Say(message.Status);
             if (!string.IsNullOrWhiteSpace(message.BackupPath))
             {
                 _lastBackupPath = message.BackupPath;
@@ -123,7 +395,7 @@ sealed class StickCentreForm : Form
         }
         catch (Exception ex)
         {
-            if (!IsDisposed) _status.Text = "Operation stopped: " + ex.Message;
+            if (!IsDisposed) Say("Operation stopped: " + ex.Message);
         }
         finally
         {
@@ -210,7 +482,7 @@ sealed class StickCentreForm : Form
         };
         _notification = RegisterDeviceNotification(Handle, ref filter, DeviceNotifyWindowHandle);
         if (_notification == IntPtr.Zero)
-            _status.Text = "Ready. Windows could not register for device-arrival notifications; open the window again after reconnecting.";
+            Say("Ready. Windows could not register for device-arrival notifications; open the window again after reconnecting.");
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -256,7 +528,11 @@ sealed class StickCentreForm : Form
         _apply.Enabled = enabled;
         _restore.Enabled = enabled;
         _glitch.Enabled = enabled;
+        _live.Enabled = enabled;
     }
+
+    // The result box needs Windows line breaks, and some messages arrive with plain ones.
+    private void Say(string text) => _status.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
 
     private void UpdateBackupLabel() => _backup.Text = File.Exists(_lastBackupPath)
         ? "Latest backup: " + Path.GetFileName(_lastBackupPath)
@@ -277,7 +553,7 @@ sealed class StickCentreForm : Form
         }
         catch (Exception)
         {
-            _status.Text = "Settings could not be saved. Auto-apply will remain enabled only for this window.";
+            Say("Settings could not be saved. Auto-apply will remain enabled only for this window.");
         }
     }
 
@@ -313,13 +589,14 @@ sealed class StickCentreForm : Form
     private static string? ReadProperty(object? value, string property) =>
         value?.GetType().GetProperty(property, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)?.GetValue(value)?.ToString();
 
-    private static void Style(Button button, int x, int y, int width)
+    private static void Style(Button button, Rectangle bounds, bool primary)
     {
-        button.SetBounds(x, y, width, 38);
+        button.Bounds = bounds;
         button.FlatStyle = FlatStyle.Flat;
-        button.BackColor = Color.FromArgb(88, 101, 242);
+        button.BackColor = primary ? Color.FromArgb(88, 101, 242) : Color.FromArgb(36, 40, 56);
         button.ForeColor = Color.White;
         button.FlatAppearance.BorderSize = 0;
+        button.Cursor = Cursors.Hand;
     }
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
