@@ -53,7 +53,7 @@ static class StickMath
     // One stick, both axes. The wording says what a calibration can and cannot fix.
     public static StickVerdict Judge(AxisStats x, AxisStats y)
     {
-        if (x.Samples < 50 || y.Samples < 50)
+        if (x.Samples < 25 || y.Samples < 25)
             return new StickVerdict(false, false, false, "Not enough readings yet. Keep your hands off the stick and try again.");
         var radial = MathF.Sqrt(x.OffsetPercent * x.OffsetPercent + y.OffsetPercent * y.OffsetPercent);
         var centreOff = radial >= OffsetWarnPercent;
@@ -86,10 +86,10 @@ static class StickMath
     }
 
     // Did a change cost any report rate? True means undo it. PROVISIONAL limits, and conservative:
-    // fewer than 50 reports in either short comparison window is too little data, so undo the change.
+    // fewer than 25 reports in either short comparison window is too little data, so undo the change.
     public static bool GotWorse(RateStats before, RateStats after)
     {
-        if (before.Reports < 50 || after.Reports < 50) return true;
+        if (before.Reports < 25 || after.Reports < 25) return true;
         return after.PerSecond < before.PerSecond * 0.9 || after.P99GapMs > before.P99GapMs * 1.1;
     }
 }

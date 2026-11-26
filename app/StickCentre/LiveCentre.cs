@@ -7,13 +7,16 @@ namespace JesusKpekpes;
 // The caller owns the short-lived IControllerLink; this class never disposes it.
 internal static class LiveCentre
 {
-    // Keep both rate windows plus two protocol response waits below one second.
-    // At 250 ms per sample window and 100 ms per response, expected work is about 700 ms.
-    private static readonly TimeSpan RateWindow = TimeSpan.FromMilliseconds(250);
+    // Time: one 100 ms response wait to read, one 150 ms window to measure, then about 250 ms per write (100 ms wait plus a window).
+    // Typical run is two writes, about 0.75 s; the budget stops a third write if the run is already long.
+    private static readonly TimeSpan RateWindow = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan TimeBudget = TimeSpan.FromMilliseconds(800); // stop starting new writes after this
     private const int ReadTimeoutCapMs = 50;
-    private const int MinReportsForRateComparison = 50;
-    private const int CentreStep = 5;
-    private const int MaxAxisAdjustments = 3;
+    private const int MinReportsForRateComparison = 25;
+    private const int MaxWrites = 3;
+    private const int MinStepUnits = 5;
+    private const float TargetPercent = 0.75f;
+    private const float MinGainPerUnit = 0.003f;
     private const byte UsbInputReportId = 0x01;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -40,11 +43,12 @@ internal static class LiveCentre
         Measurement? AfterRollback);
 
     private sealed record BackupFile(int SchemaVersion, string Model, byte Mode, DateTime CreatedUtc, ushort[] Values);
-    private sealed record Adjustment(int Index, float OffsetPercent, ushort Before, ushort After);
 
     /// <summary>
-    /// Measure, backup, apply one report, read back and re-measure. At most three centre fields
-    /// change, each by the upstream tool's default five-unit step, clamped to the controller limit.
+    /// Closed-loop volatile centre correction. Measure; back up; step each off-centre axis by a bounded amount sized from the measured
+    /// offset; read the values back; re-measure; learn from the result how far one unit moves the reading (and in which direction);
+    /// finish the correction. At most three writes, each clamped, all in memory only. Any surprise (bad read-back, a slower report
+    /// rate, a centre that moved farther away, an axis that does not respond) puts the original values back and verifies them.
     /// </summary>
     internal static OperationResult Apply(IControllerLink link, string backupDirectory)
     {
@@ -56,6 +60,7 @@ internal static class LiveCentre
         string? backupPath = null;
         CentreProtocol.CalibrationSnapshot? original = null;
         var writeAttempted = false;
+        var clock = Stopwatch.StartNew();
         try
         {
             original = CentreProtocol.ValidateDevice(link);
@@ -63,51 +68,74 @@ internal static class LiveCentre
             if (before.ReportRate.Reports < MinReportsForRateComparison)
                 return Fail("Too few USB reports were received to safely compare report rate. No calibration was written.", before);
 
-            var adjustments = BuildAdjustments(original, before);
-            if (adjustments.Count == 0)
+            var axes = BuildAxes(original, before);
+            if (axes.Count == 0)
                 return new OperationResult(true, false, false,
-                    "No stable off-centre axis needs a small centre adjustment. Nothing was written.", null, before, null, null);
+                    "No stable off-centre axis needs a centre correction. Nothing was written.", null, before, null, null);
 
             backupPath = WriteBackup(backupDirectory, original);
-            var changedValues = (ushort[])original.Values.Clone();
-            foreach (var adjustment in adjustments) changedValues[adjustment.Index] = adjustment.After;
-            var proposed = original with { Values = changedValues };
-
-            // From this point a failed send may still have reached the controller; every error rolls back.
+            var values = (ushort[])original.Values.Clone();
+            var max = CentreProtocol.MaxValueFor(original.Model);
+            var firstCap = Math.Max(1, max / 100);
+            var totalCap = firstCap * 3;
+            var after = before;
             writeAttempted = true;
-            CentreProtocol.WriteVolatile(link, proposed);
-            var readBack = CentreProtocol.ReadCurrent(link);
-            if (!CentreProtocol.ValuesEqual(proposed, readBack))
-                throw new InvalidDataException("The controller's read-back did not match the requested centre values.");
 
-            var after = Measure(link);
-            if (StickMath.GotWorse(before.ReportRate, after.ReportRate))
+            for (var write = 0; write < MaxWrites; write++)
             {
-                var rollback = RollBack(link, original);
-                Measurement? afterRollback = null;
-                try { afterRollback = Measure(link); } catch { /* retain the verified restore result */ }
-                return new OperationResult(false, false, rollback.Restored,
-                    rollback.Restored
-                        ? "Report rate or worst gap got worse, so the original in-memory calibration was restored."
-                        : "Report rate or worst gap got worse, but automatic restore could not be verified. Use the saved backup to restore manually.",
-                    backupPath, before, after, afterRollback);
+                var moved = false;
+                foreach (var axis in axes.Where(a => !a.Done))
+                {
+                    var wanted = write == 0 ? FirstStep(axis, max, firstCap) : Refine(axis, firstCap * 2);
+                    // Never drift further than the total cap from the original value, and stay inside the controller's range.
+                    var target = Math.Clamp(values[axis.Index] + wanted, Math.Max(0, original.Values[axis.Index] - totalCap), Math.Min(max, original.Values[axis.Index] + totalCap));
+                    var actual = target - values[axis.Index];
+                    if (actual == 0) { axis.Done = true; continue; }
+                    values[axis.Index] = (ushort)target;
+                    axis.LastDelta = actual;
+                    moved = true;
+                }
+                if (!moved) break;
+
+                var proposed = original with { Values = (ushort[])values.Clone() };
+                CentreProtocol.WriteVolatile(link, proposed);
+                var readBack = CentreProtocol.ReadCurrent(link);
+                if (!CentreProtocol.ValuesEqual(proposed, readBack))
+                    throw new InvalidDataException("The controller's read-back did not match the requested centre values.");
+
+                after = Measure(link);
+                if (StickMath.GotWorse(before.ReportRate, after.ReportRate))
+                    return RolledBackResult(link, original, backupPath, before, after,
+                        "Report rate or worst gap got worse, so the original in-memory calibration was restored.",
+                        "Report rate or worst gap got worse, but automatic restore could not be verified. Use the saved backup to restore manually.");
+
+                foreach (var axis in axes.Where(a => a.LastDelta != 0))
+                {
+                    var now = Observed(after, axis.Index).OffsetPercent;
+                    axis.Gain = (axis.CurrentPercent - now) / axis.LastDelta; // percent of travel removed per unit written
+                    axis.CurrentPercent = now;
+                    axis.Writes++;
+                    if (Math.Abs(now) < TargetPercent) axis.Done = true;
+                }
+                if (axes.All(a => a.Done) || clock.Elapsed > TimeBudget) break;
             }
 
-            if (TouchedCentreWorsened(adjustments, after))
-            {
-                var rollback = RollBack(link, original);
-                Measurement? afterRollback = null;
-                try { afterRollback = Measure(link); } catch { /* retain the verified restore result */ }
-                return new OperationResult(false, false, rollback.Restored,
-                    rollback.Restored
-                        ? "The centre reading moved farther from neutral, so the original in-memory calibration was restored."
-                        : "The centre reading worsened and automatic restore could not be verified. Use the saved backup to restore manually.",
-                    backupPath, before, after, afterRollback);
-            }
+            // Judge the result. Every touched axis must have moved toward neutral; any axis that got farther away undoes everything.
+            var worse = axes.Where(a => a.Writes > 0 && Math.Abs(a.CurrentPercent) > Math.Abs(a.StartPercent) + 0.1f).ToList();
+            var improved = axes.Where(a => a.Writes > 0 && Math.Abs(a.CurrentPercent) < Math.Abs(a.StartPercent) - 0.1f).ToList();
+            if (worse.Count > 0)
+                return RolledBackResult(link, original, backupPath, before, after,
+                    "The centre reading moved farther from neutral, so the original in-memory calibration was restored.",
+                    "The centre reading worsened and automatic restore could not be verified. Use the saved backup to restore manually.");
+            if (improved.Count == 0)
+                return RolledBackResult(link, original, backupPath, before, after,
+                    "The controller accepted the values but the centre reading did not move, so nothing was kept. Its calibration layout may differ from what this app expects.",
+                    "The centre reading did not move and automatic restore could not be verified. Use the saved backup to restore manually.");
 
-            var changes = string.Join(", ", adjustments.Select(a => $"{CentreName(a.Index)} {a.Before}→{a.After}"));
+            var summary = string.Join(", ", improved.Select(a =>
+                $"{CentreName(a.Index)} {a.StartPercent:+0.0;-0.0;0}% → {a.CurrentPercent:+0.0;-0.0;0}%"));
             return new OperationResult(true, true, false,
-                $"Applied {adjustments.Count} small volatile centre adjustment(s) ({changes}); values were read back and report rate was not worse. Nothing was saved to controller storage.",
+                $"Centre corrected in memory in {clock.ElapsedMilliseconds} ms: {summary}. Values were read back and report rate was not worse. Nothing was saved to controller storage.",
                 backupPath, before, after, null);
         }
         catch (Exception ex)
@@ -126,6 +154,68 @@ internal static class LiveCentre
             return Fail($"Calibration was not written: {ex.Message}", before, backupPath);
         }
     }
+
+    private sealed class Axis
+    {
+        internal int Index;
+        internal float StartPercent;
+        internal float CurrentPercent;
+        internal int LastDelta;
+        internal float Gain;
+        internal int Writes;
+        internal bool Done;
+    }
+
+    private static OperationResult RolledBackResult(IControllerLink link, CentreProtocol.CalibrationSnapshot original, string? backupPath,
+        Measurement before, Measurement after, string restoredMessage, string failedMessage)
+    {
+        var rollback = RollBack(link, original);
+        Measurement? afterRollback = null;
+        try { afterRollback = Measure(link); } catch { /* retain the verified restore result */ }
+        return new OperationResult(false, false, rollback.Restored, rollback.Restored ? restoredMessage : failedMessage,
+            backupPath, before, after, afterRollback);
+    }
+
+    private static List<Axis> BuildAxes(CentreProtocol.CalibrationSnapshot original, Measurement before)
+    {
+        var axes = new List<Axis>(4);
+        void Add(int index, StickObservation stick, StickMath.AxisStats axis)
+        {
+            if (stick.Verdict.EnoughData && stick.Verdict.CentreOff && !stick.Verdict.Noisy && Math.Abs(axis.OffsetPercent) >= 1f)
+                axes.Add(new Axis { Index = index, StartPercent = axis.OffsetPercent, CurrentPercent = axis.OffsetPercent });
+        }
+        Add(CentreProtocol.LeftXCentreIndex, before.LeftStick, before.LeftStick.X);
+        Add(CentreProtocol.LeftYCentreIndex, before.LeftStick, before.LeftStick.Y);
+        Add(CentreProtocol.RightXCentreIndex, before.RightStick, before.RightStick.X);
+        Add(CentreProtocol.RightYCentreIndex, before.RightStick, before.RightStick.Y);
+        return axes;
+    }
+
+    // The first step is a guess at the scale (about max/200 units per percent of travel), capped small. A raised centre value is
+    // expected to lower the reading, so a positive offset gets a positive step. The result of this step teaches the real scale and
+    // direction, and a wrong guess is caught by the final check and undone.
+    private static int FirstStep(Axis axis, int max, int cap)
+    {
+        var units = (int)Math.Round(Math.Abs(axis.StartPercent) * (max / 200.0));
+        units = Math.Clamp(units, MinStepUnits, cap);
+        return axis.StartPercent > 0 ? units : -units;
+    }
+
+    private static int Refine(Axis axis, int cap)
+    {
+        if (Math.Abs(axis.Gain) < MinGainPerUnit) { axis.Done = true; return 0; } // the axis does not respond: stop touching it
+        var units = (int)Math.Round(axis.CurrentPercent / axis.Gain);
+        return Math.Clamp(units, -cap, cap);
+    }
+
+    private static StickMath.AxisStats Observed(Measurement m, int index) => index switch
+    {
+        CentreProtocol.LeftXCentreIndex => m.LeftStick.X,
+        CentreProtocol.LeftYCentreIndex => m.LeftStick.Y,
+        CentreProtocol.RightXCentreIndex => m.RightStick.X,
+        CentreProtocol.RightYCentreIndex => m.RightStick.Y,
+        _ => throw new InvalidDataException("Unknown centre axis index.")
+    };
 
     /// <summary>Restore a previous Apply backup, first backing up the current state for rollback.</summary>
     internal static OperationResult Restore(IControllerLink link, string backupFilePath, string safetyBackupDirectory)
@@ -236,49 +326,6 @@ internal static class LiveCentre
             new StickObservation(leftX, leftY, StickMath.Judge(leftX, leftY)),
             new StickObservation(rightX, rightY, StickMath.Judge(rightX, rightY)),
             StickMath.AnalyseRate(arrivalMs));
-    }
-
-    private static List<Adjustment> BuildAdjustments(CentreProtocol.CalibrationSnapshot original, Measurement before)
-    {
-        var candidates = new List<(int Index, float Offset)>();
-        AddIfStableOffCentre(candidates, CentreProtocol.LeftXCentreIndex, before.LeftStick, before.LeftStick.X);
-        AddIfStableOffCentre(candidates, CentreProtocol.LeftYCentreIndex, before.LeftStick, before.LeftStick.Y);
-        AddIfStableOffCentre(candidates, CentreProtocol.RightXCentreIndex, before.RightStick, before.RightStick.X);
-        AddIfStableOffCentre(candidates, CentreProtocol.RightYCentreIndex, before.RightStick, before.RightStick.Y);
-
-        var max = CentreProtocol.MaxValueFor(original.Model);
-        var adjustments = new List<Adjustment>(MaxAxisAdjustments);
-        foreach (var candidate in candidates.OrderByDescending(c => Math.Abs(c.Offset)).Take(MaxAxisAdjustments))
-        {
-            var delta = candidate.Offset > 0 ? CentreStep : -CentreStep;
-            var next = Math.Clamp((int)original.Values[candidate.Index] + delta, 0, max);
-            if (next == original.Values[candidate.Index]) continue;
-            adjustments.Add(new Adjustment(candidate.Index, candidate.Offset, original.Values[candidate.Index], (ushort)next));
-        }
-        return adjustments;
-    }
-
-    private static void AddIfStableOffCentre(List<(int Index, float Offset)> candidates, int index, StickObservation stick, StickMath.AxisStats axis)
-    {
-        if (stick.Verdict.EnoughData && stick.Verdict.CentreOff && !stick.Verdict.Noisy && Math.Abs(axis.OffsetPercent) >= 1f)
-            candidates.Add((index, axis.OffsetPercent));
-    }
-
-    private static bool TouchedCentreWorsened(IReadOnlyList<Adjustment> adjustments, Measurement after)
-    {
-        foreach (var adjustment in adjustments)
-        {
-            var observed = adjustment.Index switch
-            {
-                CentreProtocol.LeftXCentreIndex => after.LeftStick.X,
-                CentreProtocol.LeftYCentreIndex => after.LeftStick.Y,
-                CentreProtocol.RightXCentreIndex => after.RightStick.X,
-                CentreProtocol.RightYCentreIndex => after.RightStick.Y,
-                _ => throw new InvalidDataException("Unknown centre axis index.")
-            };
-            if (Math.Abs(observed.OffsetPercent) > Math.Abs(adjustment.OffsetPercent) + 0.1f) return true;
-        }
-        return false;
     }
 
     private static (bool Restored, string? Error) RollBack(IControllerLink link, CentreProtocol.CalibrationSnapshot original)
