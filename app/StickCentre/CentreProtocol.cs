@@ -98,7 +98,7 @@ internal static class CentreProtocol
     {
         var mode = ModeFor(link.Model);
         if (!link.SendFeatureReport([FeatureCommandReportId, 12, mode]))
-            throw new IOException("The controller did not accept the live calibration read request.");
+            throw new IOException("The controller did not accept the live calibration read request." + Detail(link));
 
         Thread.Sleep(ReadResponseDelayMs);
         var response = link.GetFeatureReport(FeatureAnswerReportId, FeatureReportLength);
@@ -145,8 +145,10 @@ internal static class CentreProtocol
         }
 
         if (!link.SendFeatureReport(report))
-            throw new IOException("The controller did not accept the volatile calibration write.");
+            throw new IOException("The controller did not accept the volatile calibration write." + Detail(link));
     }
+
+    private static string Detail(IControllerLink link) => string.IsNullOrEmpty(link.LastFailure) ? "" : " (" + link.LastFailure + ")";
 
     internal static bool ValuesEqual(CalibrationSnapshot left, CalibrationSnapshot right) =>
         string.Equals(left.Model, right.Model, StringComparison.Ordinal)
