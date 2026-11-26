@@ -60,6 +60,13 @@ internal sealed class FakeControllerLink : IControllerLink
             return info;
         }
         if (reportId != 0x81) return null;
+        if (AckAfterWrite && _ackPending)
+        {
+            _ackPending = false;
+            var ack = new byte[64];
+            ack[0] = 0x81; ack[1] = 12; ack[2] = 1; ack[3] = 2; ack[4] = 0x28;
+            return ack;
+        }
         var mode = DeviceModel == "DualSense Edge" ? (byte)4 : (byte)2;
         var answer = new byte[64];
         answer[0] = 0x81;
@@ -80,6 +87,10 @@ internal sealed class FakeControllerLink : IControllerLink
         return answer;
     }
 
+    // Real DualSense Edge behaviour: the first answer after a write is the write's own acknowledgement, not calibration data.
+    public bool AckAfterWrite { get; set; }
+    private bool _ackPending;
+
     public bool SendFeatureReport(byte[] data)
     {
         var copy = (byte[])data.Clone();
@@ -90,6 +101,7 @@ internal sealed class FakeControllerLink : IControllerLink
                 BackupExistedBeforeFirstWrite = Directory.Exists(BackupDirectoryToCheck)
                     && Directory.EnumerateFiles(BackupDirectoryToCheck, "stick-centre-*.json").Any();
             VolatileWrites++;
+            _ackPending = true;
             for (var i = 0; i < Values.Length; i++)
                 Values[i] = (ushort)(data[3 + i * 2] | (data[4 + i * 2] << 8));
             CorruptNextAnswerAfterWrite = CorruptFirstReadBackAfterWrite && VolatileWrites == 1;
