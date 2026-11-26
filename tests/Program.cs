@@ -20,6 +20,7 @@ static void Check(bool ok, string message)
     Environment.Exit(1);
 }
 
+RestWatchTests.Run(Check);
 #if STICK_CENTRE_B
 StickCentreTests.RunReadOnly(Check);
 #endif
