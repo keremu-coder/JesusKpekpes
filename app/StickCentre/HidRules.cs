@@ -13,7 +13,17 @@ internal static class HidRules
     internal const ushort DualSenseEdgeProductId = 0x0DF2;
     internal const int UsbInputReportLength = 64;
 
-    internal sealed record Candidate(string Path, string Model, bool Usb, int InputLength);
+    internal sealed record Candidate(string Path, string Model, bool Usb, int InputLength, int FeatureLength);
+
+    // Windows accepts a feature-report write only at the device's exact feature-report size. Shorter commands are padded with zeros;
+    // a command already that long (or longer, or an unknown size) is sent as it is.
+    internal static byte[] PadFeature(byte[] data, int featureLength)
+    {
+        if (featureLength <= data.Length) return data;
+        var padded = new byte[featureLength];
+        Array.Copy(data, padded, data.Length);
+        return padded;
+    }
 
     // Only these two products are ever opened for read or write. Anything else, including look-alikes, is skipped.
     internal static string? ModelFor(ushort vendorId, ushort productId) =>
