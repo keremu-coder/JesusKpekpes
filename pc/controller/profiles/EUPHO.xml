@@ -41,8 +41,8 @@
   <LSAntiDeadZone>24</LSAntiDeadZone>
   <RSAntiDeadZone>0</RSAntiDeadZone>
   <LSMaxZone>58</LSMaxZone>
-  <RSMaxZone>57</RSMaxZone>
-  <LSVerticalScale>150</LSVerticalScale>
+  <RSMaxZone>55</RSMaxZone>
+  <LSVerticalScale>151</LSVerticalScale>
   <RSVerticalScale>118</RSVerticalScale>
   <LSMaxOutput>100</LSMaxOutput>
   <RSMaxOutput>100</RSMaxOutput>
@@ -63,11 +63,11 @@
   <RSAxialDeadOptions>
     <DeadZoneX>0</DeadZoneX>
     <DeadZoneY>0</DeadZoneY>
-    <MaxZoneX>94</MaxZoneX>
-    <MaxZoneY>95</MaxZoneY>
-    <AntiDeadZoneX>14</AntiDeadZoneX>
+    <MaxZoneX>93</MaxZoneX>
+    <MaxZoneY>92</MaxZoneY>
+    <AntiDeadZoneX>15</AntiDeadZoneX>
     <AntiDeadZoneY>15</AntiDeadZoneY>
-    <MaxOutputX>100</MaxOutputX>
+    <MaxOutputX>99</MaxOutputX>
     <MaxOutputY>100</MaxOutputY>
   </RSAxialDeadOptions>
   <LSRotation>0</LSRotation>
@@ -100,7 +100,7 @@
   <SZMaxZone>100</SZMaxZone>
   <SXAntiDeadZone>7.000000000000001</SXAntiDeadZone>
   <SZAntiDeadZone>7.000000000000001</SZAntiDeadZone>
-  <Sensitivity>1.5|1.23|1.07|1.12|1.52|1.92</Sensitivity>
+  <Sensitivity>1.51|1.23|1.07|1.12|1.52|1.92</Sensitivity>
   <ChargingType>0</ChargingType>
   <MouseAcceleration>False</MouseAcceleration>
   <ButtonMouseVerticalScale>330</ButtonMouseVerticalScale>
@@ -182,7 +182,7 @@
   <LSSquareStick>True</LSSquareStick>
   <RSSquareStick>False</RSSquareStick>
   <SquareStickRoundness>200</SquareStickRoundness>
-  <SquareRStickRoundness>200</SquareRStickRoundness>
+  <SquareRStickRoundness>202</SquareRStickRoundness>
   <LSAntiSnapback>False</LSAntiSnapback>
   <RSAntiSnapback>False</RSAntiSnapback>
   <LSAntiSnapbackDelta>160</LSAntiSnapbackDelta>
