@@ -125,9 +125,9 @@ internal static class StickTest
                 ? "Five-second hands-off stick test complete. No controller settings were changed."
                 : "Stick test incomplete. No controller settings were changed.",
             "Left stick: " + left.Verdict.Summary,
-            $"  X offset {left.X.OffsetPercent:+0.0;-0.0;0.0}% (noise {left.X.StdDev:0.0}, range {left.X.PeakToPeak}); Y offset {left.Y.OffsetPercent:+0.0;-0.0;0.0}% (noise {left.Y.StdDev:0.0}, range {left.Y.PeakToPeak}).",
+            $"  X {StickMath.CountsFromPercent(left.X.OffsetPercent):+0.00;-0.00;0.00} counts (noise {left.X.StdDev:0.00}, peak-to-peak {left.X.PeakToPeak}); Y {StickMath.CountsFromPercent(left.Y.OffsetPercent):+0.00;-0.00;0.00} counts (noise {left.Y.StdDev:0.00}, peak-to-peak {left.Y.PeakToPeak}).",
             "Right stick: " + right.Verdict.Summary,
-            $"  X offset {right.X.OffsetPercent:+0.0;-0.0;0.0}% (noise {right.X.StdDev:0.0}, range {right.X.PeakToPeak}); Y offset {right.Y.OffsetPercent:+0.0;-0.0;0.0}% (noise {right.Y.StdDev:0.0}, range {right.Y.PeakToPeak}).",
+            $"  X {StickMath.CountsFromPercent(right.X.OffsetPercent):+0.00;-0.00;0.00} counts (noise {right.X.StdDev:0.00}, peak-to-peak {right.X.PeakToPeak}); Y {StickMath.CountsFromPercent(right.Y.OffsetPercent):+0.00;-0.00;0.00} counts (noise {right.Y.StdDev:0.00}, peak-to-peak {right.Y.PeakToPeak}).",
             rate.Reports >= 3
                 ? $"Observed report rate: {rate.PerSecond:0.0} reports/second; worst gap {rate.WorstGapMs:0.0} ms (p99 {rate.P99GapMs:0.0} ms). This is measured at the app, not a guaranteed end-to-end game latency."
                 : "Report rate unavailable: too few valid controller reports were received."
