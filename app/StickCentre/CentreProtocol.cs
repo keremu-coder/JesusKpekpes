@@ -48,6 +48,10 @@ internal static class CentreProtocol
     private const byte DeviceInfoReportId = 0x20;
     private const int FeatureReportLength = 64;
     private const int CentreDataOffset = 4;
+    private const int MaxReadAttempts = 3;
+
+    private static bool IsWriteAcknowledgement(byte[] response) =>
+        response[0] == FeatureAnswerReportId && response[1] == 12 && response[2] == 1 && response[3] == 2;
     private const int ReadResponseDelayMs = 100;
 
     internal sealed record CalibrationSnapshot(string Model, byte Mode, ushort[] Values);
@@ -97,14 +101,23 @@ internal static class CentreProtocol
     internal static CalibrationSnapshot ReadCurrent(IControllerLink link)
     {
         var mode = ModeFor(link.Model);
-        if (!link.SendFeatureReport([FeatureCommandReportId, 12, mode]))
-            throw new IOException("The controller did not accept the live calibration read request." + Detail(link));
+        byte[]? response = null;
+        // Right after a write the pad answers once with the write's own acknowledgement (81 0C 01 02 ...) before it answers a new
+        // read request. Seen on a real DualSense Edge. That reply is not data: ask again, at most three times (about 0.3 s).
+        for (var attempt = 0; attempt < MaxReadAttempts; attempt++)
+        {
+            if (!link.SendFeatureReport([FeatureCommandReportId, 12, mode]))
+                throw new IOException("The controller did not accept the live calibration read request." + Detail(link));
 
-        Thread.Sleep(ReadResponseDelayMs);
-        var response = link.GetFeatureReport(FeatureAnswerReportId, FeatureReportLength);
-        if (response is null || response.Length < CentreDataOffset + ValueCount * sizeof(ushort))
-            throw new InvalidDataException("The controller returned no complete live calibration data.");
-        if (response[0] != FeatureAnswerReportId || response[1] != 12 || response[2] != mode || response[3] != 2)
+            Thread.Sleep(ReadResponseDelayMs);
+            response = link.GetFeatureReport(FeatureAnswerReportId, FeatureReportLength);
+            if (response is null || response.Length < CentreDataOffset + ValueCount * sizeof(ushort))
+                throw new InvalidDataException("The controller returned no complete live calibration data.");
+            if (IsWriteAcknowledgement(response)) continue;
+            break;
+        }
+        // Same check the dualshock-tools reference makes: report 0x81, command 12, mode 2 or 4, status 2.
+        if (response![0] != FeatureAnswerReportId || response[1] != 12 || (response[2] != 2 && response[2] != 4) || response[3] != 2)
             throw new InvalidDataException("The controller's live calibration response header is invalid (first bytes received: " + Convert.ToHexString(response, 0, Math.Min(32, response.Length)) + ", expected 81-0C-" + mode.ToString("X2") + "-02).");
 
         var values = new ushort[ValueCount];
