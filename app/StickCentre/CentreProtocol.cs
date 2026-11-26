@@ -105,7 +105,7 @@ internal static class CentreProtocol
         if (response is null || response.Length < CentreDataOffset + ValueCount * sizeof(ushort))
             throw new InvalidDataException("The controller returned no complete live calibration data.");
         if (response[0] != FeatureAnswerReportId || response[1] != 12 || response[2] != mode || response[3] != 2)
-            throw new InvalidDataException("The controller's live calibration response header is invalid.");
+            throw new InvalidDataException("The controller's live calibration response header is invalid (first bytes received: " + Convert.ToHexString(response, 0, Math.Min(12, response.Length)) + ", expected 81-0C-" + mode.ToString("X2") + "-02).");
 
         var values = new ushort[ValueCount];
         for (var i = 0; i < values.Length; i++)
