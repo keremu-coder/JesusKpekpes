@@ -225,10 +225,12 @@ AIM = (
 
 # Right-stick axis tab. These are the values from your tuned profile.
 RS_AXIS = (
-    ("MaxZoneX", "94"),
-    ("AntiDeadZoneX", "14"),
-    ("MaxZoneY", "95"),
+    ("MaxZoneX", "93"),
+    ("AntiDeadZoneX", "15"),
+    ("MaxZoneY", "92"),
     ("AntiDeadZoneY", "15"),
+    ("MaxOutputX", "99"),
+    ("MaxOutputY", "100"),
 )
 
 def apply_aim(root, skip=()):
