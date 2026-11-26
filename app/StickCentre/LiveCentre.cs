@@ -15,7 +15,7 @@ internal static class LiveCentre
     private const int MinReportsForRateComparison = 25;
     private const int MaxWrites = 3;
     private const int MinStepUnits = 5;
-    private const float TargetPercent = 0.75f;
+    private const float TargetPercent = StickMath.OffsetWarnPercent;
     private const float MinGainPerUnit = 0.003f;
     private const byte UsbInputReportId = 0x01;
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -133,7 +133,7 @@ internal static class LiveCentre
                     "The centre reading did not move and automatic restore could not be verified. Use the saved backup to restore manually.");
 
             var summary = string.Join(", ", improved.Select(a =>
-                $"{CentreName(a.Index)} {a.StartPercent:+0.0;-0.0;0}% → {a.CurrentPercent:+0.0;-0.0;0}%"));
+                $"{CentreName(a.Index)} {StickMath.CountsFromPercent(a.StartPercent):+0.00;-0.00;0.00} → {StickMath.CountsFromPercent(a.CurrentPercent):+0.00;-0.00;0.00} counts"));
             return new OperationResult(true, true, false,
                 $"Centre corrected in memory in {clock.ElapsedMilliseconds} ms: {summary}. Values were read back and report rate was not worse. Nothing was saved to controller storage.",
                 backupPath, before, after, null);
@@ -181,7 +181,7 @@ internal static class LiveCentre
         var axes = new List<Axis>(4);
         void Add(int index, StickObservation stick, StickMath.AxisStats axis)
         {
-            if (stick.Verdict.EnoughData && stick.Verdict.CentreOff && !stick.Verdict.Noisy && Math.Abs(axis.OffsetPercent) >= 1f)
+            if (stick.Verdict.EnoughData && stick.Verdict.CentreOff && !stick.Verdict.Noisy && Math.Abs(axis.OffsetPercent) >= StickMath.OffsetWarnPercent)
                 axes.Add(new Axis { Index = index, StartPercent = axis.OffsetPercent, CurrentPercent = axis.OffsetPercent });
         }
         Add(CentreProtocol.LeftXCentreIndex, before.LeftStick, before.LeftStick.X);

@@ -92,7 +92,20 @@ internal static class RestWatchTests
             && !HidRules.LooksUsb("\\\\?\\hid#vid_054c&pid_0df2#7", 0), "USB is told from Bluetooth and unknown");
         var usbOne = new HidRules.Candidate("a", "DualSense", false, 78, 64);
         var usbTwo = new HidRules.Candidate("b", "DualSense Edge", true, 64, 64);
-        check(HidRules.Prefer([usbOne, usbTwo])?.Path == "b" && HidRules.Prefer([]) is null, "a USB pad is preferred over Bluetooth");
+        check(HidRules.Prefer([usbOne, usbTwo])?.Path == "b" && HidRules.Prefer([]) is null && HidRules.Prefer([usbOne]) is null,
+            "only a USB pad is opened; Bluetooth is not a fallback");
+        check(Math.Abs(StickMath.OffsetWarnPercent - (1f / StickMath.Rest * 100f)) < 0.0001f,
+            "one USB count from 127.5 is the centre threshold");
+        var pinned = StickMath.Analyse(Enumerable.Repeat((byte)128, 40).ToList());
+        var nextCode = StickMath.Analyse(Enumerable.Repeat((byte)129, 40).ToList());
+        check(!StickMath.Judge(pinned, pinned).CentreOff, "a stick that sits on 128 is already on a centre code");
+        check(StickMath.Judge(nextCode, pinned).CentreOff && !StickMath.Judge(nextCode, pinned).Noisy,
+            "a steady reading of 129 is a wrong centre, not a worn stick");
+        check(HidRules.IsUsbDualSensePath(@"\\?\hid#vid_054c&pid_0df2&mi_03#7") && HidRules.IsUsbDualSensePath(@"\\?\HID#VID_054C&PID_0CE6#1"),
+            "USB DualSense and Edge arrival names are accepted");
+        check(!HidRules.IsUsbDualSensePath(@"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c_pid&0df2")
+            && !HidRules.IsUsbDualSensePath(@"\\?\hid#vid_054c&pid_05c4#1") && !HidRules.IsUsbDualSensePath(null),
+            "Bluetooth, other Sony pads, and empty names do not wake auto-apply");
         var command = HidRules.PadFeature([0x80, 12, 4], 64);
         check(command.Length == 64 && command[0] == 0x80 && command[1] == 12 && command[2] == 4 && command.Skip(3).All(b => b == 0),
             "a short calibration command is padded with zeros to the 64-byte feature report Windows requires");
