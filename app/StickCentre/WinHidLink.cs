@@ -20,18 +20,20 @@ internal sealed class WinHidLink : IControllerLink
 {
     private readonly SafeFileHandle _handle;
     private readonly int _inputLength;
+    private readonly int _featureLength;
     private readonly ManualResetEvent _readDone = new(false);
     private bool _disposed;
 
     public string Model { get; }
     public bool IsUsb { get; }
 
-    private WinHidLink(SafeFileHandle handle, string model, bool usb, int inputLength)
+    private WinHidLink(SafeFileHandle handle, string model, bool usb, int inputLength, int featureLength)
     {
         _handle = handle;
         Model = model;
         IsUsb = usb;
         _inputLength = inputLength;
+        _featureLength = featureLength;
     }
 
     // Registers this link as the one the Stick centre tab opens. It runs once when the app loads; it only stores a delegate and
@@ -65,8 +67,8 @@ internal sealed class WinHidLink : IControllerLink
             if (!Native.HidD_GetAttributes(probe, ref attributes)) continue;
             var model = HidRules.ModelFor(attributes.VendorId, attributes.ProductId);
             if (model is null) continue;
-            var inputLength = ReadInputLength(probe);
-            found.Add(new HidRules.Candidate(path, model, HidRules.LooksUsb(path, inputLength), inputLength));
+            var (inputLength, featureLength) = ReadReportLengths(probe);
+            found.Add(new HidRules.Candidate(path, model, HidRules.LooksUsb(path, inputLength), inputLength, featureLength));
         }
 
         var pick = HidRules.Prefer(found);
@@ -86,7 +88,7 @@ internal sealed class WinHidLink : IControllerLink
             handle.Dispose();
             throw new StickCentreLinkException(HidRules.Explain(error, HidRules.HidHideInstalled()));
         }
-        return new WinHidLink(handle, pick.Model, pick.Usb, pick.InputLength);
+        return new WinHidLink(handle, pick.Model, pick.Usb, pick.InputLength, pick.FeatureLength);
     }
 
     // One input report, or null if none arrives within timeoutMs. Overlapped, so the wait is bounded and a stuck read is
@@ -128,15 +130,23 @@ internal sealed class WinHidLink : IControllerLink
     public byte[]? GetFeatureReport(byte reportId, int length)
     {
         if (_disposed || length <= 0) return null;
-        var buffer = new byte[length];
+        // Windows wants a buffer as large as the device's biggest feature report, whatever size the caller asked for.
+        var buffer = new byte[Math.Max(length, _featureLength)];
         buffer[0] = reportId;
-        return Native.HidD_GetFeature(_handle, buffer, buffer.Length) ? buffer : null;
+        if (!Native.HidD_GetFeature(_handle, buffer, buffer.Length)) return null;
+        if (buffer.Length == length) return buffer;
+        var trimmed = new byte[length];
+        Array.Copy(buffer, trimmed, length);
+        return trimmed;
     }
 
     public bool SendFeatureReport(byte[] data)
     {
         if (_disposed || data is null || data.Length == 0) return false;
-        return Native.HidD_SetFeature(_handle, data, data.Length);
+        // Windows refuses a feature-report write unless it is exactly the device's feature-report size (64 bytes on a DualSense).
+        // The short commands the calibration uses are padded with zeros; the device reads only the bytes it needs.
+        var padded = HidRules.PadFeature(data, _featureLength);
+        return Native.HidD_SetFeature(_handle, padded, padded.Length);
     }
 
     public void Dispose()
@@ -186,12 +196,12 @@ internal sealed class WinHidLink : IControllerLink
         }
     }
 
-    private static int ReadInputLength(SafeFileHandle probe)
+    private static (int Input, int Feature) ReadReportLengths(SafeFileHandle probe)
     {
-        if (!Native.HidD_GetPreparsedData(probe, out var preparsed)) return 0;
+        if (!Native.HidD_GetPreparsedData(probe, out var preparsed)) return (0, 0);
         try
         {
-            return Native.HidP_GetCaps(preparsed, out var caps) == Native.HidpStatusSuccess ? caps.InputReportByteLength : 0;
+            return Native.HidP_GetCaps(preparsed, out var caps) == Native.HidpStatusSuccess ? (caps.InputReportByteLength, caps.FeatureReportByteLength) : (0, 0);
         }
         finally
         {
