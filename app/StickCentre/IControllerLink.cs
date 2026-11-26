@@ -21,4 +21,7 @@ interface IControllerLink : IDisposable
 
     // Feature report set. data[0] is the report id. True if Windows accepted it.
     bool SendFeatureReport(byte[] data);
+
+    // Plain-language detail of the last failed SendFeatureReport, for the error message. Empty when unknown.
+    string LastFailure => "";
 }

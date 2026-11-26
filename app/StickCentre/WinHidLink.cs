@@ -146,8 +146,12 @@ internal sealed class WinHidLink : IControllerLink
         // Windows refuses a feature-report write unless it is exactly the device's feature-report size (64 bytes on a DualSense).
         // The short commands the calibration uses are padded with zeros; the device reads only the bytes it needs.
         var padded = HidRules.PadFeature(data, _featureLength);
-        return Native.HidD_SetFeature(_handle, padded, padded.Length);
+        var ok = Native.HidD_SetFeature(_handle, padded, padded.Length);
+        LastFailure = ok ? "" : $"Windows error {Marshal.GetLastWin32Error()} on feature report 0x{data[0]:X2}, sent {padded.Length} bytes (device feature size {_featureLength})";
+        return ok;
     }
+
+    public string LastFailure { get; private set; } = "";
 
     public void Dispose()
     {
