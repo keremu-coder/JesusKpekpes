@@ -40,7 +40,7 @@ sealed class StickCentreForm : Form
     private readonly Button _restore = new() { Text = "Restore from backup…" };
     private readonly Button _glitch = new() { Text = "Glitch capture (60 s, hands off)" };
     private readonly Button _live = new() { Text = LiveStartText };
-    private readonly CheckBox _zoom = new() { Text = "Zoom ×8" };
+    private readonly CheckBox _zoom = new() { Text = "Zoom ×16" };
     private readonly Label _rate = new();
     private readonly Label _backup = new();
     private readonly StickDial _leftDial = new();
@@ -62,6 +62,14 @@ sealed class StickCentreForm : Form
     private long _reports;
     private long _lastReports;
     private long _lastRateAt;
+    private const int LiveMeanSamples = 48;
+    private readonly object _meanGate = new();
+    private readonly int[] _meanLx = new int[LiveMeanSamples];
+    private readonly int[] _meanLy = new int[LiveMeanSamples];
+    private readonly int[] _meanRx = new int[LiveMeanSamples];
+    private readonly int[] _meanRy = new int[LiveMeanSamples];
+    private int _meanCount;
+    private int _meanAt;
     private IntPtr _notification;
     private string? _lastBackupPath;
     private bool _busy;
@@ -96,7 +104,7 @@ sealed class StickCentreForm : Form
         };
         var explanation = new Label
         {
-            Text = "See where each stick rests, and fix a wrong centre in memory. USB only. Nothing is saved into the controller, and the live view never runs while another window is in front.",
+            Text = "See the rest point in counts, and trim a wrong centre in the pad itself. USB only. The handle closes when you leave this window, so the game still reads the controller directly.",
             Bounds = new Rectangle(24, 52, 652, 42),
             ForeColor = Muted,
         };
@@ -113,7 +121,7 @@ sealed class StickCentreForm : Form
         _zoom.ForeColor = Muted;
         var liveHint = new Label
         {
-            Text = "Reads the controller's own reports. Sends nothing.",
+            Text = "Input reports only. Stops when you leave this window.",
             Bounds = new Rectangle(380, 250, 260, 38),
             ForeColor = Muted,
             Font = new Font("Segoe UI", 9f),
@@ -149,11 +157,12 @@ sealed class StickCentreForm : Form
         };
         _zoom.CheckedChanged += (_, _) =>
         {
-            var factor = _zoom.Checked ? 8f : 1f;
+            var factor = _zoom.Checked ? 16f : 1f;
             _leftDial.Zoom = factor;
             _rightDial.Zoom = factor;
         };
         _liveTimer.Tick += (_, _) => LiveTick();
+        _zoom.Checked = true;
         _glitch.Click += async (_, _) => await RunOperation(Operation.Glitch);
         _test.Click += async (_, _) => await RunOperation(Operation.Test);
         _apply.Click += async (_, _) => await RunOperation(Operation.Apply);
@@ -212,6 +221,7 @@ sealed class StickCentreForm : Form
         Interlocked.Exchange(ref _reports, 0);
         _lastReports = 0;
         _lastRateAt = Environment.TickCount64;
+        lock (_meanGate) { _meanCount = 0; _meanAt = 0; }
         var cts = new CancellationTokenSource();
         _liveCts = cts;
         _live.Text = LiveStopText;
@@ -230,7 +240,12 @@ sealed class StickCentreForm : Form
             link = factory();
             if (link is null)
             {
-                problem = "No supported DualSense controller is available over USB. Connect it by USB and try again.";
+                problem = "No DualSense or DualSense Edge is connected by USB. Bluetooth is refused: the centre trim is a USB feature report, and Bluetooth adds radio delay. Use a data cable.";
+                return;
+            }
+            if (!link.IsUsb)
+            {
+                problem = "This controller is on Bluetooth, so it was not read. Plug in a data USB cable. DS4Windows can stay open.";
                 return;
             }
             var lastGood = Stopwatch.GetTimestamp();
@@ -239,9 +254,14 @@ sealed class StickCentreForm : Form
                 var report = link.ReadInputReport(50);
                 if (report is null || report.Length < 5 || report[0] != 0x01)
                 {
+                    if (report is { Length: > 0 } && report[0] == 0x31)
+                    {
+                        problem = "This report is a Bluetooth report, so the live view stopped. Plug in a data USB cable.";
+                        return;
+                    }
                     if (Stopwatch.GetElapsedTime(lastGood).TotalSeconds > 2)
                     {
-                        problem = "No reports arrived for 2 seconds. Is the controller still connected by USB?";
+                        problem = "No USB reports arrived for 2 seconds. Is the controller still connected by a data cable?";
                         return;
                     }
                     continue;
@@ -251,6 +271,7 @@ sealed class StickCentreForm : Form
                 Volatile.Write(ref _ly, report[2]);
                 Volatile.Write(ref _rx, report[3]);
                 Volatile.Write(ref _ry, report[4]);
+                PushMean(report[1], report[2], report[3], report[4]);
                 Interlocked.Increment(ref _reports);
             }
         }
@@ -292,8 +313,9 @@ sealed class StickCentreForm : Form
 
     private void LiveTick()
     {
-        UpdateStick(_leftDial, _leftNumbers, _leftState, Volatile.Read(ref _lx), Volatile.Read(ref _ly));
-        UpdateStick(_rightDial, _rightNumbers, _rightState, Volatile.Read(ref _rx), Volatile.Read(ref _ry));
+        var mean = Mean();
+        UpdateStick(_leftDial, _leftNumbers, _leftState, Volatile.Read(ref _lx), Volatile.Read(ref _ly), mean.Lx, mean.Ly, mean.Count);
+        UpdateStick(_rightDial, _rightNumbers, _rightState, Volatile.Read(ref _rx), Volatile.Read(ref _ry), mean.Rx, mean.Ry, mean.Count);
         var now = Environment.TickCount64;
         if (now - _lastRateAt < 1000) return;
         var total = Interlocked.Read(ref _reports);
@@ -303,28 +325,69 @@ sealed class StickCentreForm : Form
         _rate.Text = "Reports per second" + Environment.NewLine + perSecond.ToString("0", CultureInfo.InvariantCulture);
     }
 
-    private static void UpdateStick(StickDial dial, Label numbers, Label state, int rawX, int rawY)
+    private static void UpdateStick(StickDial dial, Label numbers, Label state, int rawX, int rawY, float meanX, float meanY, int samples)
     {
         var x = (rawX - StickMath.Rest) / StickMath.Rest;
         var y = (rawY - StickMath.Rest) / StickMath.Rest;
-        dial.SetPosition(x, y, true);
-        numbers.Text = "X " + x.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture)
-            + "   Y " + y.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture);
-        var percent = MathF.Sqrt(x * x + y * y) * 100f;
-        if (percent < StickMath.OffsetWarnPercent)
+        var mx = (meanX - StickMath.Rest) / StickMath.Rest;
+        var my = (meanY - StickMath.Rest) / StickMath.Rest;
+        dial.SetPosition(x, y, true, mx, my);
+        var cx = meanX - StickMath.Rest;
+        var cy = meanY - StickMath.Rest;
+        numbers.Text = samples < 8
+            ? "learning the rest point"
+            : "X " + cx.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + " c   Y " + cy.ToString("+0.00;-0.00;0.00", CultureInfo.InvariantCulture) + " c";
+        var radial = MathF.Sqrt(cx * cx + cy * cy);
+        if (samples < 8)
         {
-            state.Text = "At centre";
-            state.ForeColor = Good;
+            state.Text = "Reading";
+            state.ForeColor = Muted;
         }
-        else if (percent < 15f)
-        {
-            state.Text = "Off centre by " + percent.ToString("0.0", CultureInfo.InvariantCulture) + "%";
-            state.ForeColor = Amber;
-        }
-        else
+        else if (radial > 18f)
         {
             state.Text = "Stick is being moved";
             state.ForeColor = Muted;
+        }
+        else if (radial < 1f)
+        {
+            state.Text = "On a centre code";
+            state.ForeColor = Good;
+        }
+        else
+        {
+            state.Text = "Off by " + radial.ToString("0.00", CultureInfo.InvariantCulture) + " counts";
+            state.ForeColor = Amber;
+        }
+    }
+
+    private void PushMean(int lx, int ly, int rx, int ry)
+    {
+        lock (_meanGate)
+        {
+            _meanLx[_meanAt] = lx;
+            _meanLy[_meanAt] = ly;
+            _meanRx[_meanAt] = rx;
+            _meanRy[_meanAt] = ry;
+            _meanAt = (_meanAt + 1) % LiveMeanSamples;
+            if (_meanCount < LiveMeanSamples) _meanCount++;
+        }
+    }
+
+    private (float Lx, float Ly, float Rx, float Ry, int Count) Mean()
+    {
+        lock (_meanGate)
+        {
+            if (_meanCount == 0) return (StickMath.Rest, StickMath.Rest, StickMath.Rest, StickMath.Rest, 0);
+            double lx = 0, ly = 0, rx = 0, ry = 0;
+            for (var i = 0; i < _meanCount; i++)
+            {
+                lx += _meanLx[i];
+                ly += _meanLy[i];
+                rx += _meanRx[i];
+                ry += _meanRy[i];
+            }
+            var n = _meanCount;
+            return ((float)(lx / n), (float)(ly / n), (float)(rx / n), (float)(ry / n), n);
         }
     }
 
@@ -408,11 +471,16 @@ sealed class StickCentreForm : Form
     {
         var factory = OpenController;
         if (factory is null)
-            return ("Controller access is not wired in this build yet. The UI will use the HID link when package A is integrated.", null);
+            return ("Controller access is not available in this build.", null);
 
-        using var link = factory();
+        IControllerLink? opened;
+        try { opened = factory(); }
+        catch (Exception ex) { return (ex.Message, null); }
+        using var link = opened;
         if (link is null)
-            return ("No supported DualSense controller is available over USB. Connect it by USB and try again.", null);
+            return ("No DualSense or DualSense Edge is connected by USB. Bluetooth is refused: the centre trim is a USB feature report, and Bluetooth adds radio delay. Use a data cable.", null);
+        if (!link.IsUsb)
+            return ("This controller is on Bluetooth, so nothing was written. Plug in a data USB cable. DS4Windows can stay open.", null);
 
         if (automatic)
         {
@@ -422,40 +490,17 @@ sealed class StickCentreForm : Form
         }
 
         if (operation == Operation.Glitch) return (GlitchTest.Run(link).PlainLanguage, null);
+        if (operation == Operation.Test) return (StickTest.Run(link).PlainLanguage, null);
 
-        var assembly = typeof(StickCentreForm).Assembly;
-        if (operation == Operation.Test)
-        {
-            var testType = assembly.GetType("JesusKpekpes.StickTest");
-            var run = testType?.GetMethod("Run", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-            if (run is null) return ("The read-only test is not available in this build yet; package B has not been integrated.", null);
-            var result = run.Invoke(null, [link]);
-            var summary = ReadProperty(result, "PlainLanguage") ?? "The stick test returned no summary.";
-            return (summary, null);
-        }
-
-        var liveType = assembly.GetType("JesusKpekpes.LiveCentre");
-        if (liveType is null)
-            return ("Live centre apply/restore is not available in this build yet; package C has not been integrated.", null);
-
-        object? operationResult;
         if (operation == Operation.Apply)
         {
-            var apply = liveType.GetMethod("Apply", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-            if (apply is null) return ("The live apply entry point is unavailable.", null);
-            operationResult = apply.Invoke(null, [link, BackupDirectory]);
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(restorePath)) return ("Choose a backup file to restore.", null);
-            var restore = liveType.GetMethod("Restore", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
-            if (restore is null) return ("The live restore entry point is unavailable.", null);
-            operationResult = restore.Invoke(null, [link, restorePath, BackupDirectory]);
+            var applied = LiveCentre.Apply(link, BackupDirectory);
+            return (applied.Message, applied.BackupPath);
         }
 
-        var message = ReadProperty(operationResult, "Message") ?? "The live centre operation returned no status.";
-        var backupPath = ReadProperty(operationResult, "BackupPath");
-        return (message, backupPath);
+        if (string.IsNullOrWhiteSpace(restorePath)) return ("Choose a backup file to restore.", null);
+        var restored = LiveCentre.Restore(link, restorePath, BackupDirectory);
+        return (restored.Message, restored.BackupPath);
     }
 
     private void PickAndRestore()
@@ -499,6 +544,7 @@ sealed class StickCentreForm : Form
             {
                 var deviceType = Marshal.ReadInt32(m.LParam, sizeof(int));
                 if (deviceType == DbtDevTypeDeviceInterface && Marshal.PtrToStructure<DeviceBroadcastDeviceInterface>(m.LParam).ClassGuid == HidInterfaceGuid
+                    && HidRules.IsUsbDualSensePath(Marshal.PtrToStringUni(IntPtr.Add(m.LParam, 28)))
                     && _autoApply.Checked && !_busy && IsHandleCreated)
                 {
                     BeginInvoke(() => _ = RunOperation(Operation.Apply, automatic: true));
@@ -585,9 +631,6 @@ sealed class StickCentreForm : Form
             .Where(pair => pair.Length == 2)
             .ToDictionary(pair => pair[0], pair => pair[1], StringComparer.OrdinalIgnoreCase);
     }
-
-    private static string? ReadProperty(object? value, string property) =>
-        value?.GetType().GetProperty(property, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)?.GetValue(value)?.ToString();
 
     private static void Style(Button button, Rectangle bounds, bool primary)
     {
