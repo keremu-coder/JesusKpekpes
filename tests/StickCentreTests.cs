@@ -77,6 +77,11 @@ internal static class StickCentreTests
             check(link.SentReports.All(IsAllowedVolatileReport),
                 "protocol traffic contains only the live read and volatile-write framing, never a save command");
 
+            var ackLink = new FakeControllerLink { AckAfterWrite = true };
+            var ackRun = LiveCentre.Apply(ackLink, Path.Combine(root, "ack"));
+            check(ackRun.Success && ackRun.Applied && !ackRun.RolledBack,
+                "apply still works when the pad answers the first read after a write with its own acknowledgement (real DualSense Edge): " + ackRun.Message);
+
             var restored = LiveCentre.Restore(link, applied.BackupPath!, backups);
             check(restored.Success && restored.Applied && link.Values.SequenceEqual(original),
                 "restore writes the backed-up in-memory values and verifies them");
