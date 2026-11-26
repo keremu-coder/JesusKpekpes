@@ -90,9 +90,15 @@ internal static class RestWatchTests
             "other pads and other makers are refused");
         check(HidRules.LooksUsb("\\\\?\\hid#vid_054c&pid_0df2#7", 64) && !HidRules.LooksUsb("\\\\?\\hid#{00001124-0000-1000-8000-00805f9b34fb}_vid&0002054c", 78)
             && !HidRules.LooksUsb("\\\\?\\hid#vid_054c&pid_0df2#7", 0), "USB is told from Bluetooth and unknown");
-        var usbOne = new HidRules.Candidate("a", "DualSense", false, 78);
-        var usbTwo = new HidRules.Candidate("b", "DualSense Edge", true, 64);
+        var usbOne = new HidRules.Candidate("a", "DualSense", false, 78, 64);
+        var usbTwo = new HidRules.Candidate("b", "DualSense Edge", true, 64, 64);
         check(HidRules.Prefer([usbOne, usbTwo])?.Path == "b" && HidRules.Prefer([]) is null, "a USB pad is preferred over Bluetooth");
+        var command = HidRules.PadFeature([0x80, 12, 4], 64);
+        check(command.Length == 64 && command[0] == 0x80 && command[1] == 12 && command[2] == 4 && command.Skip(3).All(b => b == 0),
+            "a short calibration command is padded with zeros to the 64-byte feature report Windows requires");
+        var longer = new byte[64]; longer[0] = 0x80;
+        check(ReferenceEquals(HidRules.PadFeature(longer, 64), longer) && HidRules.PadFeature([1, 2], 0).Length == 2,
+            "a command that is already full size, or an unknown size, is sent as it is");
         check(HidRules.Explain(5, true).Contains("HidHide", StringComparison.Ordinal) && !HidRules.Explain(32, false).Contains("HidHide", StringComparison.Ordinal),
             "HidHide is named only when it is installed");
     }
