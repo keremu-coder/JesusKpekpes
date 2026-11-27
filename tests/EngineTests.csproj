@@ -22,6 +22,8 @@
     <Compile Include="..\app\StickCentre\StickTest.cs" Link="StickCentre\StickTest.cs" Condition="Exists('..\app\StickCentre\StickTest.cs')" />
     <Compile Include="..\app\StickCentre\CentreProtocol.cs" Link="StickCentre\CentreProtocol.cs" Condition="Exists('..\app\StickCentre\CentreProtocol.cs')" />
     <Compile Include="..\app\StickCentre\LiveCentre.cs" Link="StickCentre\LiveCentre.cs" Condition="Exists('..\app\StickCentre\LiveCentre.cs')" />
+    <Compile Include="..\app\StickCentre\StickCalibration.cs" Link="StickCentre\StickCalibration.cs" Condition="Exists('..\app\StickCentre\StickCalibration.cs')" />
+    <Compile Include="..\app\StickCentre\StickSave.cs" Link="StickCentre\StickSave.cs" Condition="Exists('..\app\StickCentre\StickSave.cs')" />
     <Compile Include="..\app\StickCentre\RestWatch.cs" Link="StickCentre\RestWatch.cs" />
     <Compile Include="..\app\StickCentre\GlitchTest.cs" Link="StickCentre\GlitchTest.cs" />
     <Compile Include="..\app\StickCentre\HidRules.cs" Link="StickCentre\HidRules.cs" />

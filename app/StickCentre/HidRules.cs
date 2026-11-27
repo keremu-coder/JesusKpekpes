@@ -39,9 +39,23 @@ internal static class HidRules
         && !path.Contains("bthenum", StringComparison.OrdinalIgnoreCase)
         && !path.Contains("{00001124-0000-1000-8000-00805f9b34fb}", StringComparison.OrdinalIgnoreCase);
 
-    // A USB pad wins over a Bluetooth one, because the calibration commands are USB only.
+    // Calibration commands are USB feature reports. A Bluetooth-only pad is not a fallback: opening it cannot centre the stick
+    // and the radio delay is exactly what this app refuses to add.
     internal static Candidate? Prefer(IReadOnlyList<Candidate> candidates) =>
-        candidates.FirstOrDefault(c => c.Usb) ?? candidates.FirstOrDefault();
+        candidates.FirstOrDefault(c => c.Usb);
+
+    // Device-arrival names from USB HID look like \\?\HID#VID_054C&PID_0DF2&MI_03#...
+    // Bluetooth uses the HID service guid and VID&0002054C, which this rejects on purpose.
+    internal static bool IsUsbDualSensePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        if (path.Contains("bthenum", StringComparison.OrdinalIgnoreCase)) return false;
+        if (path.Contains("00001124-0000-1000-8000-00805f9b34fb", StringComparison.OrdinalIgnoreCase)) return false;
+        var text = path.ToLowerInvariant();
+        var sonyUsb = text.Contains("vid_054c", StringComparison.Ordinal);
+        var dualSense = text.Contains("pid_0ce6", StringComparison.Ordinal) || text.Contains("pid_0df2", StringComparison.Ordinal);
+        return sonyUsb && dualSense;
+    }
 
     internal static string Explain(int win32Error, bool hidHide) => win32Error switch
     {

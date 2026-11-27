@@ -74,6 +74,9 @@ internal sealed class WinHidLink : IControllerLink
         var pick = HidRules.Prefer(found);
         if (pick is null)
         {
+            if (found.Count > 0)
+                throw new StickCentreLinkException(
+                    "This controller is on Bluetooth, so it was not opened. The centre trim is a USB feature report, and Bluetooth adds radio delay on top of the stick. Plug in a data USB cable. DS4Windows can stay open.");
             // Nothing supported answered. If something refused to answer and HidHide is installed, that is the likely reason.
             if (blocked.Count > 0 && HidRules.HidHideInstalled())
                 throw new StickCentreLinkException(HidRules.Explain(Native.ErrorAccessDenied, hidHide: true));
