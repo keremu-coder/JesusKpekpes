@@ -63,6 +63,9 @@ internal static class StickCentreTests
         Directory.CreateDirectory(root);
         try
         {
+            // The first timed read on a busy build machine pays for JIT compilation and can fall under the report-count floor.
+            // Warm the code path up once so the timed tests below measure the logic, not the machine.
+            for (var warm = 0; warm < 3; warm++) _ = LiveCentre.Measure(new FakeControllerLink());
             var link = new FakeControllerLink { BackupDirectoryToCheck = backups };
             var original = (ushort[])link.Values.Clone();
             var applied = LiveCentre.Apply(link, backups);
