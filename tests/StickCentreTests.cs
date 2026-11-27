@@ -207,6 +207,42 @@ internal static class StickCentreTests
         }
     }
 
+    internal static void RunSettle(Action<bool, string> check)
+    {
+        static byte[] Report(int lx, int ly) { var r = new byte[64]; r[0] = 1; r[1] = (byte)lx; r[2] = (byte)ly; r[3] = 128; r[4] = 128; r[8] = 8; return r; }
+        static SettleTest.StickTracker Play(params (int X, int Y)[] rests)
+        {
+            var t = new SettleTest.StickTracker(1, 2);
+            double now = 0;
+            foreach (var (x, y) in rests)
+            {
+                for (var i = 0; i < 100; i++, now++) t.Feed(Report(255, 128), now);       // pushed to the edge
+                for (var i = 0; i < 40; i++, now++) t.Feed(Report(160, 128), now);        // swinging back, not yet at rest
+                for (var i = 0; i < 700; i++, now++) t.Feed(Report(x, y), now);           // let go and settled
+            }
+            return t;
+        }
+
+        var same = Play((131, 124), (131, 124), (131, 124), (132, 124), (131, 124));
+        check(same.Releases.Count == 5 && Math.Abs(same.Releases[0].X - 3.5f) < 0.01f && Math.Abs(same.Releases[0].Y - -3.5f) < 0.01f,
+            "five push-and-release cycles give five resting points, in counts from the middle");
+        check(SettleTest.Describe("Left stick", same.Releases).Contains("same point every time", StringComparison.Ordinal),
+            "a stick that lands on the same spot is reported as healthy: " + SettleTest.Describe("Left stick", same.Releases));
+
+        var wander = Play((131, 124), (136, 118), (124, 131), (130, 126), (138, 120));
+        check(SettleTest.Describe("Left stick", wander.Releases).Contains("does NOT come back", StringComparison.Ordinal),
+            "a stick that lands somewhere different each time is reported as the stick itself, not a trim problem");
+
+        var held = Play((128, 150), (128, 150), (128, 150));
+        check(held.Releases.Count == 0, "a stick that stays more than 20 counts off is not counted as having come to rest");
+
+        var few = Play((131, 124), (131, 124));
+        check(SettleTest.Describe("Right stick", few.Releases).Contains("at least 3", StringComparison.Ordinal), "fewer than three releases gives no verdict");
+
+        var link = new FakeControllerLink();
+        check(SettleTest.StoredValuesLine(link).StartsWith("Centre values stored in the pad right now:", StringComparison.Ordinal), "the stored centre values are read and shown");
+    }
+
     internal static void RunSave(Action<bool, string> check)
     {
         var root = Path.Combine(Path.GetTempPath(), "stick-save-tests-" + Guid.NewGuid().ToString("N"));

@@ -42,7 +42,8 @@ sealed class StickCentreForm : Form
     private readonly Button _live = new() { Text = LiveStartText };
     private readonly Button _centre = new() { Text = "Calibrate centre (hands off)" };
     private readonly Button _range = new() { Text = RangeStartText };
-    private readonly Button _save = new() { Text = "Save into the controller permanently…" };
+    private readonly Button _save = new() { Text = "Save permanently…" };
+    private readonly Button _settle = new() { Text = "Settle test (push, let go ×10)" };
     private const string RangeStartText = "Calibrate range…";
     private const string RangeFinishText = "Finish range";
     private const string RangeRunningMarker = "Range calibration is running";
@@ -142,7 +143,8 @@ sealed class StickCentreForm : Form
         Style(_glitch, new Rectangle(358, 452, 318, 40), primary: false);
         Style(_centre, new Rectangle(24, 500, 318, 40), primary: true);
         Style(_range, new Rectangle(358, 500, 318, 40), primary: true);
-        Style(_save, new Rectangle(24, 548, 652, 40), primary: false);
+        Style(_save, new Rectangle(24, 548, 318, 40), primary: false);
+        Style(_settle, new Rectangle(358, 548, 318, 40), primary: true);
         _save.BackColor = Color.FromArgb(200, 120, 20);
         _autoApply.SetBounds(24, 596, 652, 40);
         _autoApply.ForeColor = Muted;
@@ -176,6 +178,7 @@ sealed class StickCentreForm : Form
         _zoom.Checked = true;
         _glitch.Click += async (_, _) => await RunOperation(Operation.Glitch);
         _centre.Click += async (_, _) => await RunOperation(Operation.Centre);
+        _settle.Click += async (_, _) => await RunOperation(Operation.Settle);
         _save.Click += async (_, _) =>
         {
             var answer = MessageBox.Show(this,
@@ -190,7 +193,7 @@ sealed class StickCentreForm : Form
         _apply.Click += async (_, _) => await RunOperation(Operation.Apply);
         _restore.Click += (_, _) => PickAndRestore();
 
-        Controls.AddRange([title, explanation, card, _test, _apply, _restore, _glitch, _centre, _range, _save, _autoApply, _backup, _status]);
+        Controls.AddRange([title, explanation, card, _test, _apply, _restore, _glitch, _centre, _range, _save, _settle, _autoApply, _backup, _status]);
 
         _lastBackupPath = ReadLastBackup();
         UpdateBackupLabel();
@@ -200,7 +203,7 @@ sealed class StickCentreForm : Form
         };
     }
 
-    private enum Operation { Test, Apply, Restore, Glitch, Centre, RangeBegin, RangeFinish, Save }
+    private enum Operation { Test, Apply, Restore, Glitch, Centre, RangeBegin, RangeFinish, Save, Settle }
 
     private static void BuildStickColumn(Panel card, string name, int left, StickDial dial, Label caption, Label numbers, Label state)
     {
@@ -469,10 +472,11 @@ sealed class StickCentreForm : Form
                 Operation.Centre => "Calibrating the centre. Keep both sticks and the controller completely still for about three seconds…",
                 Operation.RangeBegin => "Starting range calibration…",
                 Operation.RangeFinish => "Finishing range calibration…",
+                Operation.Settle => "Starting the settle test…",
                 Operation.Save => "Saving into the controller. Do not unplug it and do not close this window…",
                 _ => "Restoring the selected backup in memory…",
             });
-            var message = await Task.Run(() => RunBackend(operation, automatic, restorePath));
+            var message = await Task.Run(() => RunBackend(operation, automatic, restorePath, text => PostToUi(() => Say(text))));
             if (IsDisposed) return;
             Say(message.Status);
             if (operation == Operation.RangeBegin) _rangeRunning = message.Status.StartsWith(RangeRunningMarker, StringComparison.Ordinal);
@@ -498,7 +502,7 @@ sealed class StickCentreForm : Form
         }
     }
 
-    private static (string Status, string? BackupPath) RunBackend(Operation operation, bool automatic, string? restorePath)
+    private static (string Status, string? BackupPath) RunBackend(Operation operation, bool automatic, string? restorePath, Action<string>? progress = null)
     {
         var factory = OpenController;
         if (factory is null)
@@ -532,6 +536,7 @@ sealed class StickCentreForm : Form
             return (run.Message, run.BackupPath);
         }
         if (operation == Operation.RangeFinish) return (StickCalibration.FinishRange(link).Message, null);
+        if (operation == Operation.Settle) return (SettleTest.Run(link, progress), null);
         if (operation == Operation.Save)
         {
             var run = StickSave.Save(link, BackupDirectory);
@@ -625,6 +630,7 @@ sealed class StickCentreForm : Form
         _glitch.Enabled = normal;
         _centre.Enabled = normal;
         _save.Enabled = normal;
+        _settle.Enabled = normal;
         _live.Enabled = enabled;
         _range.Enabled = enabled;
     }
