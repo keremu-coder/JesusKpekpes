@@ -49,6 +49,10 @@ internal static class CentreProtocol
     private const int FeatureReportLength = 64;
     private const int CentreDataOffset = 4;
     private const int MaxReadAttempts = 3;
+    private const int ReadPollMs = 10;
+
+    // Same check the dualshock-tools reference makes: report 0x81, command 12, mode 2 or 4, status 2.
+    private static bool HeaderIsValid(byte[] r) => r[0] == FeatureAnswerReportId && r[1] == 12 && (r[2] == 2 || r[2] == 4) && r[3] == 2;
 
     private static bool IsWriteAcknowledgement(byte[] response) =>
         response[0] == FeatureAnswerReportId && response[1] == 12 && response[2] == 1 && response[3] == 2;
@@ -102,23 +106,31 @@ internal static class CentreProtocol
     {
         var mode = ModeFor(link.Model);
         byte[]? response = null;
-        // Right after a write the pad answers once with the write's own acknowledgement (81 0C 01 02 ...) before it answers a new
-        // read request. Seen on a real DualSense Edge. That reply is not data: ask again, at most three times (about 0.3 s).
+        var needed = CentreDataOffset + ValueCount * sizeof(ushort);
+        // The pad answers a read request within a few milliseconds, so the answer is polled every 10 ms for up to 100 ms instead of
+        // always waiting the full 100 ms. A real read now costs a fraction of what it did, which keeps Apply well inside its time budget.
+        // Right after a write the pad answers first with the write's own acknowledgement (81 0C 01 02 ...). That reply is not data:
+        // keep polling, and if it is still the acknowledgement at the deadline, ask again (at most three times).
         for (var attempt = 0; attempt < MaxReadAttempts; attempt++)
         {
             if (!link.SendFeatureReport([FeatureCommandReportId, 12, mode]))
                 throw new IOException("The controller did not accept the live calibration read request." + Detail(link));
 
-            Thread.Sleep(ReadResponseDelayMs);
-            response = link.GetFeatureReport(FeatureAnswerReportId, FeatureReportLength);
-            if (response is null || response.Length < CentreDataOffset + ValueCount * sizeof(ushort))
+            var asked = System.Diagnostics.Stopwatch.GetTimestamp();
+            while (true)
+            {
+                Thread.Sleep(ReadPollMs);
+                response = link.GetFeatureReport(FeatureAnswerReportId, FeatureReportLength);
+                if (response is { } r && r.Length >= needed && !IsWriteAcknowledgement(r) && HeaderIsValid(r)) break;
+                if (System.Diagnostics.Stopwatch.GetElapsedTime(asked).TotalMilliseconds >= ReadResponseDelayMs) break;
+            }
+            if (response is null || response.Length < needed)
                 throw new InvalidDataException("The controller returned no complete live calibration data.");
             if (IsWriteAcknowledgement(response)) continue;
             break;
         }
-        // Same check the dualshock-tools reference makes: report 0x81, command 12, mode 2 or 4, status 2.
-        if (response![0] != FeatureAnswerReportId || response[1] != 12 || (response[2] != 2 && response[2] != 4) || response[3] != 2)
-            throw new InvalidDataException("The controller's live calibration response header is invalid (first bytes received: " + Convert.ToHexString(response, 0, Math.Min(32, response.Length)) + ", expected 81-0C-" + mode.ToString("X2") + "-02).");
+        if (!HeaderIsValid(response!))
+            throw new InvalidDataException("The controller's live calibration response header is invalid (first bytes received: " + Convert.ToHexString(response!, 0, Math.Min(32, response!.Length)) + ", expected 81-0C-" + mode.ToString("X2") + "-02).");
 
         var values = new ushort[ValueCount];
         for (var i = 0; i < values.Length; i++)
