@@ -28,6 +28,7 @@ StickCentreTests.RunReadOnly(Check);
 StickCentreTests.RunLive(Check);
 StickCentreTests.RunCalibration(Check);
 StickCentreTests.RunSave(Check);
+StickCentreTests.RunSettle(Check);
 #endif
 
 var click = Empty(4000);
