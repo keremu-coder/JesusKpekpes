@@ -243,19 +243,20 @@ static class Updater
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    public static async Task<Found?> Check(Version current)
+    /// <summary>The newest release newer than this copy, or why the check could not be made.</summary>
+    public static async Task<(Found? Update, string? Problem)> Check(Version current)
     {
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("JesusKpekpes-updater");
             client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
-            var json = await client.GetStringAsync("https://api.github.com/repos/" + Repo + "/releases?per_page=15");
-            return Pick(json, current);
+            var json = await client.GetStringAsync("https://api.github.com/repos/" + Repo + "/releases?per_page=40");
+            return (Pick(json, current), null);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException)
         {
-            return null;
+            return (null, "Could not reach GitHub to look for an update.");
         }
     }
 

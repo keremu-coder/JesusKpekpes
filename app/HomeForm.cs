@@ -17,7 +17,7 @@ sealed class HomeForm : Form
         MaximizeBox = false;
         MinimizeBox = true;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 740);
+        ClientSize = new Size(460, 700);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 11f);
@@ -30,24 +30,24 @@ sealed class HomeForm : Form
         };
         var body = new Label
         {
-            Text = "One window. Minimize, or the X, hides it on the logo by the clock. It is not on the taskbar. Right-click that logo and choose Exit to quit.",
+            Text = "One window. Minimize, or the X, hides it on the logo by the clock. Right-click that logo and choose Exit to quit.",
             ForeColor = Color.FromArgb(180, 184, 198),
-            Bounds = new Rectangle(28, 78, 404, 70),
+            Bounds = new Rectangle(28, 144, 404, 40),
         };
-        var audio = Button("Audio tune", 150, () => Open(new GuideForm(false)));
-        var pc = Button("Optimize the PC", 214, () => Open(new PcForm()));
-        var programs = Button("Get the audio programs", 278, () => Open(new ProgramsForm()));
-        var cod = Button("Call of Duty settings", 342, () => Open(new CodForm()));
-        var check = Button("Sound check (compare two tunes)", 406, () => Open(new SoundCheckForm()));
-        var bench = Button("Monitor and frames", 470, () => Open(new BenchForm()));
-        var startup = Button("Startup menu", 534, () => Open(new StartupForm()));
-        var stickCentre = Button("Stick centre", 592, () => Open(new StickCentreForm()));
-        _update = Button("Update", 646, StartUpdate);
+        var audio = Button("Audio tune", 188, () => Open(new GuideForm(false)));
+        var pc = Button("Optimize the PC", 244, () => Open(new PcForm()));
+        var programs = Button("Get the audio programs", 300, () => Open(new ProgramsForm()));
+        var cod = Button("Call of Duty settings", 356, () => Open(new CodForm()));
+        var check = Button("Sound check (compare two tunes)", 412, () => Open(new SoundCheckForm()));
+        var bench = Button("Monitor and frames", 468, () => Open(new BenchForm()));
+        var startup = Button("Startup menu", 524, () => Open(new StartupForm()));
+        var stickCentre = Button("Stick centre", 580, () => Open(new StickCentreForm()));
+        _update = Button("Update", 92, StartUpdate);
         _update.Visible = false;
         _ver.Text = "Version " + Updater.Current().ToString(3);
-        _ver.Font = new Font("Segoe UI", 8.5f);
+        _ver.Font = new Font("Segoe UI", 9f);
         _ver.ForeColor = Color.FromArgb(196, 184, 165);
-        _ver.Bounds = new Rectangle(28, 700, 404, 32);
+        _ver.Bounds = new Rectangle(28, 64, 404, 24);
         Controls.AddRange([title, body, audio, pc, programs, cod, check, bench, startup, stickCentre, _update, _ver]);
         _tray.Icon = Window.Mark;
         _tray.Text = "Jesus Kpekpes";
@@ -59,6 +59,7 @@ sealed class HomeForm : Form
         _tray.ContextMenuStrip = menu;
         _tray.MouseDoubleClick += (_, _) => Reveal();
         Shown += (_, _) => CheckForUpdate();
+        Shown += (_, _) => FitOnScreen();
         Shown += (_, _) =>
         {
             if (AudioKit.Installed(AudioKit.Tools[0])) return;
@@ -71,7 +72,7 @@ sealed class HomeForm : Form
         };
     }
 
-    /// Quiet on purpose: no network, no release, no answer means no button and no message.
+    /// The update line stays under the title, so a tall window cannot hide it.
     async void CheckForUpdate()
     {
         try
@@ -79,11 +80,26 @@ sealed class HomeForm : Form
             var current = Updater.Current();
             var note = Updater.TakeResult();
             if (note is not null) _ver.Text = note;
-            if (!Updater.CanUpdate(current)) return;
+            if (!Updater.CanUpdate(current))
+            {
+                _ver.Text = "Version " + current.ToString(3) + ". This copy cannot update itself. Install the newest setup once.";
+                return;
+            }
+            if (note is null) _ver.Text = "Version " + current.ToString(3) + ". Checking for an update…";
             var dir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             _ = Task.Run(() => Updater.Tidy(dir));
-            var found = await Updater.Check(current);
-            if (found is null || IsDisposed) return;
+            var (found, problem) = await Updater.Check(current);
+            if (IsDisposed) return;
+            if (problem is not null)
+            {
+                _ver.Text = "Version " + current.ToString(3) + ". " + problem;
+                return;
+            }
+            if (found is null)
+            {
+                if (note is null) _ver.Text = "Version " + current.ToString(3) + ". This is the latest version.";
+                return;
+            }
             _found = found;
             _update.Text = "Update to version " + found.Version.ToString(3);
             _update.Visible = true;
@@ -91,8 +107,17 @@ sealed class HomeForm : Form
         }
         catch (Exception)
         {
-            /* no answer is not an error */
+            if (!IsDisposed) _ver.Text = "Version " + Updater.Current().ToString(3) + ". Could not check for an update.";
         }
+    }
+
+    void FitOnScreen()
+    {
+        AutoScroll = true;
+        var work = Screen.FromControl(this).WorkingArea;
+        if (Height <= work.Height - 12) return;
+        var chrome = Height - ClientSize.Height;
+        ClientSize = new Size(ClientSize.Width, Math.Max(420, work.Height - chrome - 12));
     }
 
     async void StartUpdate()
