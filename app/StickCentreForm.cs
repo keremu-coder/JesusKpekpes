@@ -42,6 +42,7 @@ sealed class StickCentreForm : Form
     private readonly Button _live = new() { Text = LiveStartText };
     private readonly Button _centre = new() { Text = "Calibrate centre (hands off)" };
     private readonly Button _range = new() { Text = RangeStartText };
+    private readonly Button _save = new() { Text = "Save into the controller permanently…" };
     private const string RangeStartText = "Calibrate range…";
     private const string RangeFinishText = "Finish range";
     private const string RangeRunningMarker = "Range calibration is running";
@@ -97,7 +98,7 @@ sealed class StickCentreForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(700, 756);
+        ClientSize = new Size(700, 790);
         BackColor = Color.FromArgb(7, 9, 15);
         ForeColor = Color.FromArgb(242, 243, 245);
         Font = new Font("Segoe UI", 10.5f);
@@ -141,14 +142,16 @@ sealed class StickCentreForm : Form
         Style(_glitch, new Rectangle(358, 452, 318, 40), primary: false);
         Style(_centre, new Rectangle(24, 500, 318, 40), primary: true);
         Style(_range, new Rectangle(358, 500, 318, 40), primary: true);
-        _autoApply.SetBounds(24, 548, 652, 40);
+        Style(_save, new Rectangle(24, 548, 652, 40), primary: false);
+        _save.BackColor = Color.FromArgb(200, 120, 20);
+        _autoApply.SetBounds(24, 596, 652, 40);
         _autoApply.ForeColor = Muted;
         _autoApply.Checked = ReadAutoApply();
         _autoApply.CheckedChanged += (_, _) => SaveSettings();
-        _backup.SetBounds(24, 590, 652, 22);
+        _backup.SetBounds(24, 638, 652, 22);
         _backup.ForeColor = Muted;
         _backup.Text = "No backup selected";
-        _status.SetBounds(24, 618, 652, 120);
+        _status.SetBounds(24, 666, 652, 112);
         _status.Multiline = true;
         _status.ReadOnly = true;
         _status.ScrollBars = ScrollBars.Vertical;
@@ -173,12 +176,21 @@ sealed class StickCentreForm : Form
         _zoom.Checked = true;
         _glitch.Click += async (_, _) => await RunOperation(Operation.Glitch);
         _centre.Click += async (_, _) => await RunOperation(Operation.Centre);
+        _save.Click += async (_, _) =>
+        {
+            var answer = MessageBox.Show(this,
+                "This writes the controller's current stick calibration into its permanent storage. It stays after you unplug it, and it is not undone by unplugging." + Environment.NewLine + Environment.NewLine +
+                "A backup of the current values is kept first. Only do this after the stick already reads well (press Test first)." + Environment.NewLine + Environment.NewLine +
+                "Do not unplug the controller or close this window while it saves. Save now?",
+                "Save into the controller?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (answer == DialogResult.Yes) await RunOperation(Operation.Save);
+        };
         _range.Click += async (_, _) => await RunOperation(_rangeRunning ? Operation.RangeFinish : Operation.RangeBegin);
         _test.Click += async (_, _) => await RunOperation(Operation.Test);
         _apply.Click += async (_, _) => await RunOperation(Operation.Apply);
         _restore.Click += (_, _) => PickAndRestore();
 
-        Controls.AddRange([title, explanation, card, _test, _apply, _restore, _glitch, _centre, _range, _autoApply, _backup, _status]);
+        Controls.AddRange([title, explanation, card, _test, _apply, _restore, _glitch, _centre, _range, _save, _autoApply, _backup, _status]);
 
         _lastBackupPath = ReadLastBackup();
         UpdateBackupLabel();
@@ -188,7 +200,7 @@ sealed class StickCentreForm : Form
         };
     }
 
-    private enum Operation { Test, Apply, Restore, Glitch, Centre, RangeBegin, RangeFinish }
+    private enum Operation { Test, Apply, Restore, Glitch, Centre, RangeBegin, RangeFinish, Save }
 
     private static void BuildStickColumn(Panel card, string name, int left, StickDial dial, Label caption, Label numbers, Label state)
     {
@@ -457,6 +469,7 @@ sealed class StickCentreForm : Form
                 Operation.Centre => "Calibrating the centre. Keep both sticks and the controller completely still for about three seconds…",
                 Operation.RangeBegin => "Starting range calibration…",
                 Operation.RangeFinish => "Finishing range calibration…",
+                Operation.Save => "Saving into the controller. Do not unplug it and do not close this window…",
                 _ => "Restoring the selected backup in memory…",
             });
             var message = await Task.Run(() => RunBackend(operation, automatic, restorePath));
@@ -519,6 +532,11 @@ sealed class StickCentreForm : Form
             return (run.Message, run.BackupPath);
         }
         if (operation == Operation.RangeFinish) return (StickCalibration.FinishRange(link).Message, null);
+        if (operation == Operation.Save)
+        {
+            var run = StickSave.Save(link, BackupDirectory);
+            return (run.Message, run.BackupPath);
+        }
         if (operation == Operation.Test) return (StickTest.Run(link).PlainLanguage, null);
 
         if (operation == Operation.Apply)
@@ -606,6 +624,7 @@ sealed class StickCentreForm : Form
         _restore.Enabled = normal;
         _glitch.Enabled = normal;
         _centre.Enabled = normal;
+        _save.Enabled = normal;
         _live.Enabled = enabled;
         _range.Enabled = enabled;
     }

@@ -71,6 +71,12 @@ internal sealed class FakeControllerLink : IControllerLink
             reply[0] = (byte)(_answer83 >> 24); reply[1] = (byte)(_answer83 >> 16); reply[2] = (byte)(_answer83 >> 8); reply[3] = (byte)_answer83;
             return reply;
         }
+        if (reportId == 0x81 && _reply81 is not null)
+        {
+            var reply = _reply81;
+            _reply81 = null;
+            return reply;
+        }
         if (reportId != 0x81) return null;
         if (AckAfterWrite && _ackPending)
         {
@@ -154,8 +160,48 @@ internal sealed class FakeControllerLink : IControllerLink
         _calibrationEffect = EffectOfCentreCalibration;
     }
 
+    // The pad's permanent-save commands (0x80 with 21 or 3), as the dualshock-tools reference describes them.
+    internal readonly List<string> SaveCommands = [];
+    internal bool RefuseRightModuleUnlock { get; set; }
+    internal bool RightModuleNeverLocks { get; set; }
+    internal readonly bool[] ModuleOpen = new bool[2];
+    internal bool StorageOpen { get; private set; }
+    internal ushort[]? PersistedValues { get; private set; }
+    private byte[]? _reply81;
+
+    private bool HandleSave(byte[] data)
+    {
+        if (data.Length < 3 || data[0] != 0x80) return false;
+        if (data[1] == 21 && data.Length >= 5)
+        {
+            SaveCommands.Add($"{data[1]},{data[2]},{data[3]}");
+            var module = data[3] & 1;
+            var ack = new byte[64]; ack[0] = 0x81; ack[1] = 21; ack[2] = data[2]; ack[3] = 2;
+            if (data[2] == 6)
+            {
+                if (RefuseRightModuleUnlock && module == 1) ack[3] = 0; else ModuleOpen[module] = true;
+            }
+            else if (data[2] == 4)
+            {
+                if (RightModuleNeverLocks && module == 1) ack[3] = 0; else ModuleOpen[module] = false;
+            }
+            _reply81 = ack;
+            return true;
+        }
+        if (data[1] == 3)
+        {
+            SaveCommands.Add($"{data[1]},{data[2]}");
+            StorageOpen = data[2] == 2;
+            _reply81 = new byte[64];
+            _reply81[0] = 0x81; _reply81[1] = 3; _reply81[2] = data[2];
+            return true;
+        }
+        return false;
+    }
+
     public bool SendFeatureReport(byte[] data)
     {
+        if (HandleSave(data)) { SentReports.Add((byte[])data.Clone()); return true; }
         if (data.Length >= 3 && data[0] == 0x82) { SentReports.Add((byte[])data.Clone()); HandleCalibration(data); return true; }
         var copy = (byte[])data.Clone();
         SentReports.Add(copy);
@@ -165,10 +211,12 @@ internal sealed class FakeControllerLink : IControllerLink
                 BackupExistedBeforeFirstWrite = Directory.Exists(BackupDirectoryToCheck)
                     && Directory.EnumerateFiles(BackupDirectoryToCheck, "stick-centre-*.json").Any();
             VolatileWrites++;
+            if (StorageOpen && ModuleOpen[0] && ModuleOpen[1]) PersistedValues = null; // set after the values are copied below
             _ackPending = true;
             for (var i = 0; i < Values.Length; i++)
                 Values[i] = (ushort)(data[3 + i * 2] | (data[4 + i * 2] << 8));
             CorruptNextAnswerAfterWrite = CorruptFirstReadBackAfterWrite && VolatileWrites == 1;
+            if (StorageOpen && ModuleOpen[0] && ModuleOpen[1]) PersistedValues = (ushort[])Values.Clone();
         }
         return true;
     }
