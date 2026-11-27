@@ -187,6 +187,46 @@ internal static class StickCentreTests
         }
     }
 
+    internal static void RunSave(Action<bool, string> check)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "stick-save-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var edge = new FakeControllerLink();
+            edge.Values[3] = 2222;
+            var saved = StickSave.Save(edge, Path.Combine(root, "edge"));
+            check(saved.Success && saved.BackupPath is not null && File.Exists(saved.BackupPath), "Edge save succeeds and keeps a backup: " + saved.Message);
+            check(edge.PersistedValues is not null && edge.PersistedValues.SequenceEqual(edge.Values),
+                "the values reached the stick modules (written back while both modules and storage were unlocked)");
+            check(!edge.StorageOpen && !edge.ModuleOpen[0] && !edge.ModuleOpen[1], "everything is locked again after a save");
+            check(edge.SaveCommands.SequenceEqual(["21,6,0", "21,6,1", "3,2", "21,4,0", "21,4,1", "3,1"]),
+                "Edge sends unlock module 0, 1, storage, then lock modules 0, 1, storage: " + string.Join(" ", edge.SaveCommands));
+
+            var plain = new FakeControllerLink { DeviceModel = "DualSense" };
+            var plainSaved = StickSave.Save(plain, Path.Combine(root, "plain"));
+            check(plainSaved.Success && plain.SaveCommands.SequenceEqual(["3,2", "3,1"]) && !plain.StorageOpen,
+                "a standard DualSense unlocks and locks the storage once: " + plainSaved.Message);
+
+            var stuck = new FakeControllerLink { RefuseRightModuleUnlock = true };
+            var stuckRun = StickSave.Save(stuck, Path.Combine(root, "stuck"));
+            check(!stuckRun.Success && stuck.PersistedValues is null && !stuck.ModuleOpen[0] && !stuck.ModuleOpen[1] && !stuck.StorageOpen,
+                "if a module will not unlock, nothing is written and whatever was opened is locked again: " + stuckRun.Message);
+
+            var noLock = new FakeControllerLink { RightModuleNeverLocks = true };
+            var noLockRun = StickSave.Save(noLock, Path.Combine(root, "nolock"));
+            check(!noLockRun.Success && noLockRun.Message.Contains("Unplug and replug", StringComparison.Ordinal) && !noLock.StorageOpen,
+                "if a module will not lock, the person is told to replug and the storage is still locked: " + noLockRun.Message);
+
+            var bluetooth = new FakeControllerLink { Usb = false };
+            var bluetoothRun = StickSave.Save(bluetooth, root);
+            check(!bluetoothRun.Success && bluetooth.SaveCommands.Count == 0, "Bluetooth is refused before any save command");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
     private static bool IsAllowedVolatileReport(byte[] report) =>
         report.Length >= 3 && report[0] == 0x80 && report[1] == 12
         && (report[2] == 1 && report.Length == 27 || report[2] == 4 && report.Length == 3);
