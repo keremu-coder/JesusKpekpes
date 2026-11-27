@@ -8,13 +8,18 @@ namespace JesusKpekpes;
 static class StickMath
 {
     // DualSense USB input report 0x01: bytes 1 to 4 are left X, left Y, right X, right Y, each 0 to 255.
-    // The rest point is taken as 127.5, the middle of 0 to 255. PROVISIONAL: check on real hardware.
+    // The electrical middle is 127.5. A report cannot represent that, so a healthy stick sits on 127 or 128.
+    // One count past that pair (a mean that has reached 129 or 126) is a real rest bias. The old 3% line
+    // was about four counts and hid the slow spin this tab exists to remove. PROVISIONAL on a real Edge.
     public const float Rest = 127.5f;
+    public const float OneCountPercent = 1f / Rest * 100f;
 
-    // PROVISIONAL thresholds. They are conservative on purpose: a wrong "healthy" is worse than a wrong "check this".
-    public const float OffsetWarnPercent = 3f;   // resting offset that is clearly more than noise, in percent of travel
+    // A steady mean at least one USB count from 127.5. A stick that only reports 128 is left alone.
+    public const float OffsetWarnPercent = OneCountPercent;
     public const float NoiseWarnCounts = 2.5f;   // resting standard deviation, in counts
     public const float WanderWarnCounts = 8f;    // resting peak-to-peak, in counts
+
+    public static float CountsFromPercent(float offsetPercent) => offsetPercent / OneCountPercent;
 
     public readonly record struct AxisStats(int Samples, float Mean, float OffsetPercent, float StdDev, int Min, int Max)
     {
@@ -61,9 +66,9 @@ static class StickMath
             || x.PeakToPeak >= WanderWarnCounts || y.PeakToPeak >= WanderWarnCounts;
         string summary;
         if (!centreOff && !noisy)
-            summary = "The stick rests where it should.";
+            summary = "The stick rests on the centre codes.";
         else if (centreOff && !noisy)
-            summary = "The stick rests off centre and holds steady. A centre calibration should fix this.";
+            summary = "The stick rests at least one count off centre and holds steady. The pad's own centre trim should fix this.";
         else if (!centreOff && noisy)
             summary = "The reading wanders at rest. A calibration will not fix that. Dirt or a worn stick module is more likely.";
         else
