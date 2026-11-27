@@ -131,6 +131,62 @@ internal static class StickCentreTests
         }
     }
 
+    internal static void RunCalibration(Action<bool, string> check)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "stick-calib-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            check(StickCalibration.HeaderOf([0x83, 1, 1, 1, 9]) == 0x83010101u && StickCalibration.HeaderOf([0x81, 1, 1, 1]) == 0u && StickCalibration.HeaderOf(null) == 0u,
+                "a 0x83 answer is read as one 32-bit header, anything else as none");
+
+            var edge = new FakeControllerLink { EffectOfCentreCalibration = FakeControllerLink.CalibrationEffect.Fixed };
+            var ok = StickCalibration.CalibrateCentre(edge, Path.Combine(root, "edge"));
+            check(ok.Success && ok.BackupPath is not null && File.Exists(ok.BackupPath), "Edge centre calibration succeeds and keeps a backup: " + ok.Message);
+            var expected = new[] { "1,1,1", "3,1,1", "3,1,1", "3,1,1", "3,1,1", "2,1,1", "2,1,1" };
+            check(edge.CalibrationCommands.SequenceEqual(expected),
+                "Edge sends begin, four samples, then the two-step end, exactly as the reference tool: " + string.Join(" ", edge.CalibrationCommands));
+            check(!edge.SentReports.Any(r => r[0] == 0x80 && r.Length > 1 && (r[1] == 3 || r[1] == 21)),
+                "centre calibration never sends a permanent-storage command");
+
+            var plain = new FakeControllerLink { DeviceModel = "DualSense", EffectOfCentreCalibration = FakeControllerLink.CalibrationEffect.Fixed };
+            var plainRun = StickCalibration.CalibrateCentre(plain, Path.Combine(root, "plain"));
+            check(plainRun.Success && plain.CalibrationCommands.Count(c => c == "2,1,1") == 1, "a standard DualSense ends with one command: " + plainRun.Message);
+
+            var worse = new FakeControllerLink { EffectOfCentreCalibration = FakeControllerLink.CalibrationEffect.Worse };
+            var worseValues = (ushort[])worse.Values.Clone();
+            var worseRun = StickCalibration.CalibrateCentre(worse, Path.Combine(root, "worse"));
+            check(!worseRun.Success && worseRun.Message.Contains("did not get better", StringComparison.Ordinal) && worse.Values.SequenceEqual(worseValues),
+                "a calibration that leaves the stick farther off centre is undone and reported: " + worseRun.Message);
+
+            var refused = new FakeControllerLink { RefuseCentreBegin = true };
+            var refusedRun = StickCalibration.CalibrateCentre(refused, Path.Combine(root, "refused"));
+            check(!refusedRun.Success && refused.CalibrationCommands.Count == 1 && refusedRun.Message.Contains("Nothing was changed", StringComparison.Ordinal),
+                "a pad that refuses to begin is left alone: " + refusedRun.Message);
+
+            var bluetooth = new FakeControllerLink { Usb = false };
+            var bluetoothRun = StickCalibration.CalibrateCentre(bluetooth, root);
+            check(!bluetoothRun.Success && bluetooth.CalibrationCommands.Count == 0, "Bluetooth is refused before any calibration command");
+
+            var moving = new FakeControllerLink { StickMovesDuringSampling = true, EffectOfCentreCalibration = FakeControllerLink.CalibrationEffect.Fixed };
+            var movingRun = StickCalibration.CalibrateCentre(moving, Path.Combine(root, "moving"));
+            check(!movingRun.Success && !moving.CalibrationCommands.Contains("2,1,1") && movingRun.Message.Contains("not finished", StringComparison.Ordinal),
+                "if the stick is touched mid-run, the run is abandoned and the end command is never sent: " + movingRun.Message);
+
+            var range = new FakeControllerLink();
+            var begin = StickCalibration.BeginRange(range, Path.Combine(root, "range"));
+            var finish = StickCalibration.FinishRange(range);
+            check(begin.Success && finish.Success && range.CalibrationCommands.SequenceEqual(["1,1,2", "2,1,2", "2,1,2"]),
+                "Edge range calibration begins, then ends in two steps: " + string.Join(" ", range.CalibrationCommands));
+            var rangePlain = new FakeControllerLink { DeviceModel = "DualSense" };
+            _ = StickCalibration.BeginRange(rangePlain, Path.Combine(root, "range2"));
+            check(StickCalibration.FinishRange(rangePlain).Success, "a standard DualSense ends range calibration in one step");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
     private static bool IsAllowedVolatileReport(byte[] report) =>
         report.Length >= 3 && report[0] == 0x80 && report[1] == 12
         && (report[2] == 1 && report.Length == 27 || report[2] == 4 && report.Length == 3);

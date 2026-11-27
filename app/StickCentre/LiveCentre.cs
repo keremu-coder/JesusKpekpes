@@ -344,7 +344,7 @@ internal static class LiveCentre
         }
     }
 
-    private static string WriteBackup(string directory, CentreProtocol.CalibrationSnapshot snapshot)
+    internal static string WriteBackup(string directory, CentreProtocol.CalibrationSnapshot snapshot)
     {
         ValidateValues(snapshot);
         Directory.CreateDirectory(directory);

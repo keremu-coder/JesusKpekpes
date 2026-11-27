@@ -43,7 +43,13 @@ internal sealed class FakeControllerLink : IControllerLink
         var rightX = LinearGain != 0
             ? (byte)Math.Clamp(Math.Round(127.5 + 6.5 + LinearGain * (Values[RightXIndex] - 2000)), 0, 255)
             : Values[RightXIndex] > 2000 ? (byte)128 : (byte)134;
-        return [0x01, 128, 128, rightX, 128];
+        if (_movingAfterSample) rightX = 200;
+        if (_calibrationEffect == CalibrationEffect.Fixed) rightX = 128;
+        else if (_calibrationEffect == CalibrationEffect.Worse) rightX = 141;
+        // A full 64-byte USB report: sticks at 1 to 4, triggers 0, d-pad released (0x08), no buttons, gyro still.
+        var report = new byte[64];
+        report[0] = 0x01; report[1] = 128; report[2] = 128; report[3] = rightX; report[4] = 128; report[8] = 0x08;
+        return report;
     }
 
     public byte[]? GetFeatureReport(byte reportId, int length)
@@ -58,6 +64,12 @@ internal sealed class FakeControllerLink : IControllerLink
             Array.Copy(date, 0, info, 1, date.Length);
             if (ReturnBadDeviceInfo) info[0] = 0;
             return info;
+        }
+        if (reportId == 0x83)
+        {
+            var reply = new byte[64];
+            reply[0] = (byte)(_answer83 >> 24); reply[1] = (byte)(_answer83 >> 16); reply[2] = (byte)(_answer83 >> 8); reply[3] = (byte)_answer83;
+            return reply;
         }
         if (reportId != 0x81) return null;
         if (AckAfterWrite && _ackPending)
@@ -91,8 +103,60 @@ internal sealed class FakeControllerLink : IControllerLink
     public bool AckAfterWrite { get; set; }
     private bool _ackPending;
 
+    // The pad's own 0x82/0x83 stick calibration, as the dualshock-tools reference describes it.
+    internal enum CalibrationEffect { None, Fixed, Worse }
+    internal CalibrationEffect EffectOfCentreCalibration { get; set; } = CalibrationEffect.None;
+    internal bool RefuseCentreBegin { get; set; }
+    internal bool StickMovesDuringSampling { get; set; }
+    internal readonly List<string> CalibrationCommands = [];
+    private CalibrationEffect _calibrationEffect = CalibrationEffect.None;
+    private uint _answer83;
+    private bool _centreBegun;
+    private int _endStage;
+
+    private void HandleCalibration(byte[] data)
+    {
+        var kind = data.Length > 3 ? data[3] : (byte)0;
+        CalibrationCommands.Add($"{data[1]},{data[2]},{kind}");
+        var edge = DeviceModel == "DualSense Edge";
+        _answer83 = 0;
+        if (data[1] == 1 && kind == 1)
+        {
+            if (RefuseCentreBegin) return;
+            _centreBegun = true; _endStage = 0; _answer83 = 0x83010101;
+        }
+        else if (data[1] == 3 && kind == 1 && _centreBegun)
+        {
+            _answer83 = 0x83010101;
+            if (StickMovesDuringSampling) _movingAfterSample = true;
+        }
+        else if (data[1] == 2 && kind == 1 && _centreBegun)
+        {
+            if (!edge) { _answer83 = 0x83010102; FinishCentre(); }
+            else if (_endStage == 0) { _endStage = 1; _answer83 = 0x83010101; }
+            else { _answer83 = 0x83010103; FinishCentre(); }
+        }
+        else if (data[1] == 1 && kind == 2) { _rangeBegun = true; _endStage = 0; _answer83 = 0x83010201; }
+        else if (data[1] == 2 && kind == 2 && _rangeBegun)
+        {
+            if (!edge) { _answer83 = 0x83010202; _rangeBegun = false; }
+            else if (_endStage == 0) { _endStage = 1; _answer83 = 0x83010201; }
+            else { _answer83 = 0x83010203; _rangeBegun = false; }
+        }
+    }
+
+    private bool _rangeBegun;
+    private bool _movingAfterSample;
+
+    private void FinishCentre()
+    {
+        _centreBegun = false;
+        _calibrationEffect = EffectOfCentreCalibration;
+    }
+
     public bool SendFeatureReport(byte[] data)
     {
+        if (data.Length >= 3 && data[0] == 0x82) { SentReports.Add((byte[])data.Clone()); HandleCalibration(data); return true; }
         var copy = (byte[])data.Clone();
         SentReports.Add(copy);
         if (data.Length >= 3 && data[0] == 0x80 && data[1] == 12 && data[2] == 1)
